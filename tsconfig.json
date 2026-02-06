@@ -1,19 +1,22 @@
 {
   "compilerOptions": {
-    "target": "esnext",
-    "lib": ["esnext"],
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "types": [
-        "./worker-configuration.d.ts",
-        "@types/node",
-        "node"
-    ],
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client", "./worker-configuration.d.ts", "node"],
     "strict": true,
+    "noEmit": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["worker-configuration.d.ts", "src/**/*.ts"]
+  "include": [
+    "src/**/*",
+    "server/**/*",
+    "worker-entry.mjs",
+    "vite.config.ts",
+    "nitro.config.ts"
+  ]
 }

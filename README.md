@@ -1,97 +1,88 @@
-# Sandbox IDE (Cloudflare Workers + Sandbox)
+# Cloudflare Sandbox IDE (Nitro + React)
 
-一个轻量版的在线 IDE，重点在于 Cloudflare Sandbox 能力：
+这个项目已改造成：
+- 后端：Nitro 3（Cloudflare module preset）
+- 前端：React + TailwindCSS + shadcn/ui（Base style）
+- 运行时：Cloudflare Worker + Sandbox Container + R2
+- 鉴权：GitHub OAuth（组织/团队限制）
 
-- 手动启动 / 关闭 Sandbox
-- 文件存储在 R2（即使不开 Sandbox 也能编辑）
-- 通过 xterm.js 连接终端（WebSocket）
-- Sandbox 启动时尝试把 R2 挂载到 `/workspace`
-- 运行 JS / Python / Shell 文件
-- 已关闭端口转发服务（`start-server/services`）
+## 功能
 
-## 前置条件
+- 左侧文件树（R2 持久化）
+- 中间编辑器（多文件 tab）
+- 右侧终端（xterm + WebSocket）
+- 一键启动/停止 Sandbox
+- 文件直接存 R2，不开 Sandbox 也可编辑
+- 支持 GitHub 组织成员登录控制
+- 不再启动任何额外转发服务
 
-- Cloudflare 账号（你有 paid plan，满足容器能力要求）
-- 已安装 Node.js / pnpm / Wrangler
-- 已登录 Cloudflare：`npx wrangler login`
-- 已创建 GitHub OAuth App（需要组织成员权限）
+## 目录
 
-## 本地开发
+- `src/` React 前端
+- `server/` Nitro API/路由
+- `Dockerfile` Sandbox 容器镜像
+- `worker-entry.mjs` Wrangler 入口（转发到 Nitro 构建产物，并导出 `Sandbox`）
+
+## 本地启动
+
+### 1) 安装依赖
 
 ```bash
 pnpm install
+```
+
+### 2) 前端 + Nitro 本地开发（不走 Cloudflare 绑定）
+
+```bash
 pnpm dev
 ```
 
-首次本地运行会构建容器镜像，时间会明显更长（几分钟是正常现象）。
+说明：这个模式主要用于 UI 开发；会读取 `wrangler.dev.jsonc`（不含 containers），避免 wrangler 容器代理报错。R2/Sandbox 绑定在该模式不可用。
 
-## 部署到 Cloudflare
+### 3) Cloudflare 本地联调（推荐验证后端能力）
+
+先构建：
+
+```bash
+pnpm build
+```
+
+然后用 wrangler 跑：
+
+```bash
+pnpm dev:cf
+```
+
+这样会强制加载根目录 `wrangler.jsonc`（不是 `.output/server/wrangler.json`），并启用容器、R2、DO 绑定。
+本地 `localhost` 访问时会自动跳过 GitHub 登录（仅开发环境便捷调试）。
+
+## 部署
 
 ```bash
 pnpm deploy
 ```
 
-本项目不需要额外手动创建 KV / D1。`wrangler.jsonc` 已配置：
+## OAuth 配置
 
-- `containers`（Sandbox 镜像）
-- `durable_objects`（Sandbox DO 绑定）
-- `r2_buckets`（文件存储）
-- `migrations`（SQLite class）
+`wrangler.jsonc` 已包含：
+- `GITHUB_CLIENT_ID`
+- `GITHUB_ALLOWED_ORG`
+- `GITHUB_ALLOWED_TEAM`
 
-## R2 配置
-
-1. 在 Cloudflare 创建 R2 bucket（默认示例名：`cloudflare-sandbox-files`）。
-2. 在 `wrangler.jsonc` 里更新：
-   - `r2_buckets[].bucket_name`
-   - `vars.R2_BUCKET_NAME`
-   - `vars.R2_ACCOUNT_ID`
-   - `vars.R2_S3_ENDPOINT`
-3. 设置 R2 S3 API 密钥（用于 sandbox mount）：
-
-```bash
-wrangler secret put R2_ACCESS_KEY_ID
-wrangler secret put R2_SECRET_ACCESS_KEY
-```
-
-说明：`wrangler dev` 下 bucket mount 可能不可用（FUSE 限制），生产部署后可正常挂载。即使本地 mount 失败，R2 文件编辑功能仍可用。
-
-## GitHub 鉴权配置
-
-当前项目已接入 GitHub OAuth，只有允许组织成员可访问页面和 API。
-
-1. 在 `wrangler.jsonc` 配置：
-   - `vars.GITHUB_CLIENT_ID`
-   - `vars.GITHUB_ALLOWED_ORG`
-   - `vars.GITHUB_ALLOWED_TEAM`（可选，留空则只校验组织）
-2. 设置 OAuth client secret（不要写入代码）：
+`GITHUB_CLIENT_SECRET` 必须走 Secret：
 
 ```bash
 wrangler secret put GITHUB_CLIENT_SECRET
 ```
 
-## 一键部署链接（Deploy Button）
+## R2 挂载配置
 
-你这个仓库的 Deploy Button：
+需要配置：
+- `R2_BUCKET_NAME`
+- `R2_S3_ENDPOINT` 或 `R2_ACCOUNT_ID`
+- 可选：`R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY`
 
-```md
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiadd/cloudflare-sandbox)
-```
+## 注意
 
-直接访问链接：
-
-```txt
-https://deploy.workers.cloudflare.com/?url=https://github.com/xiadd/cloudflare-sandbox
-```
-
-## 主要 API
-
-- `POST /api/sandbox/start`：启动 sandbox
-- `POST /api/sandbox/stop`：关闭 sandbox（终止进程并销毁实例）
-- `GET /api/sandbox/status`：返回当前 Worker 进程内记录的运行状态
-- `GET /api/auth/me`：返回当前登录用户
-- `GET /api/files`：列目录
-- `GET /api/read`：读文件
-- `POST /api/write`：写文件
-- `POST /api/mkdir`：创建目录
-- `POST /api/delete`：删除文件/目录
-- `GET /ws`：终端 WebSocket 连接
+- `lite` 规格由 Cloudflare 固定，CPU/内存/磁盘不能细粒度自定义。
+- 本地 `wrangler dev` 对 R2 mount 可能有限制；生产部署后可正常挂载。

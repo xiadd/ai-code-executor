@@ -1,82 +1,50 @@
-/**
- * For more details on how to configure Wrangler, refer to:
- * https://developers.cloudflare.com/workers/wrangler/configuration/
- */
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "ai-code-executor",
-	"main": "src/index.ts",
-	"compatibility_date": "2025-05-06",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
-	"observability": {
-		"enabled": true
-	},
-	"containers": [
-		{
-			"class_name": "Sandbox",
-			"image": "./Dockerfile",
-			"instance_type": "lite",
-			"max_instances": 5
-		}
-	],
-	"durable_objects": {
-		"bindings": [
-			{
-				"class_name": "Sandbox",
-				"name": "Sandbox"
-			}
-		]
-	},
-	"r2_buckets": [
-		{
-			"binding": "CODE_BUCKET",
-			"bucket_name": "cloudflare-sandbox-files"
-		}
-	],
-	"vars": {
-		"GITHUB_CLIENT_ID": "Ov23liSnoAA7tWYmGP7I",
-		"GITHUB_ALLOWED_ORG": "WhiteMatrixTech",
-		"GITHUB_ALLOWED_TEAM": "",
-		"R2_BUCKET_NAME": "cloudflare-sandbox-files",
-		"R2_ACCOUNT_ID": "REPLACE_WITH_YOUR_ACCOUNT_ID",
-		"R2_S3_ENDPOINT": "https://REPLACE_WITH_YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
-	},
-	"migrations": [
-		{
-			"new_sqlite_classes": [
-				"Sandbox"
-			],
-			"tag": "v1"
-		}
-	]
-	/**
-	 * Smart Placement
-	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
-	 */
-	// "placement": {  "mode": "smart" }
-	/**
-	 * Bindings
-	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
-	 * databases, object storage, AI inference, real-time communication and more.
-	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
-	 */
-	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-	 * Note: Use secrets to store sensitive data.
-	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 */
-	// "vars": {  "MY_VARIABLE": "production_value" }
-	/**
-	 * Static Assets
-	 * https://developers.cloudflare.com/workers/static-assets/binding/
-	 */
-	// "assets": {  "directory": "./public/",  "binding": "ASSETS" }
-	/**
-	 * Service Bindings (communicate between multiple Workers)
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-	 */
-	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ai-code-executor",
+  "main": "worker-entry.mjs",
+  "compatibility_date": "2025-07-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "instance_type": "lite",
+      "max_instances": 5
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Sandbox",
+        "name": "Sandbox"
+      }
+    ]
+  },
+  "r2_buckets": [
+    {
+      "binding": "CODE_BUCKET",
+      "bucket_name": "cloudflare-sandbox-files"
+    }
+  ],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".output/public"
+  },
+  "vars": {
+    "GITHUB_CLIENT_ID": "Ov23liSnoAA7tWYmGP7I",
+    "GITHUB_ALLOWED_ORG": "WhiteMatrixTech",
+    "GITHUB_ALLOWED_TEAM": "",
+    "R2_BUCKET_NAME": "cloudflare-sandbox-files",
+    "R2_ACCOUNT_ID": "REPLACE_WITH_YOUR_ACCOUNT_ID",
+    "R2_S3_ENDPOINT": "https://REPLACE_WITH_YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Sandbox"]
+    }
+  ]
 }
