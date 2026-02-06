@@ -1,92 +1,65 @@
-# Minimal Sandbox SDK Example
+# Sandbox IDE (Cloudflare Workers + Sandbox)
 
-A minimal Cloudflare Worker that demonstrates the core capabilities of the Sandbox SDK.
+一个轻量版的在线 IDE，重点在于 Cloudflare Sandbox 能力：
 
-## Features
+- 手动启动 / 关闭 Sandbox
+- 通过 xterm.js 连接终端（WebSocket）
+- 在 `/workspace` 文件系统内读写文件
+- 运行 JS / Python / Shell 文件
+- 启动并暴露 HTTP 服务端口（预览链接）
 
-- **Command Execution**: Execute Python code in isolated containers
-- **File Operations**: Read and write files in the sandbox filesystem
-- **Simple API**: Two endpoints demonstrating basic sandbox operations
+## 前置条件
 
-## How It Works
+- Cloudflare 账号（你有 paid plan，满足容器能力要求）
+- 已安装 Node.js / pnpm / Wrangler
+- 已登录 Cloudflare：`npx wrangler login`
 
-This example provides two simple endpoints:
-
-1. **`/run`** - Executes Python code and returns the output
-2. **`/file`** - Creates a file, reads it back, and returns the contents
-
-## API Endpoints
-
-### Execute Python Code
+## 本地开发
 
 ```bash
-GET http://localhost:8787/run
+pnpm install
+pnpm dev
 ```
 
-Runs `python -c "print(2 + 2)"` and returns:
+首次本地运行会构建容器镜像，时间会明显更长（几分钟是正常现象）。
 
-```json
-{
-  "output": "4\n",
-  "success": true
-}
-```
-
-### File Operations
+## 部署到 Cloudflare
 
 ```bash
-GET http://localhost:8787/file
+pnpm deploy
 ```
 
-Creates `/workspace/hello.txt`, reads it back, and returns:
+本项目不需要额外手动创建 KV / D1。`wrangler.jsonc` 已配置：
 
-```json
-{
-  "content": "Hello, Sandbox!"
-}
+- `containers`（Sandbox 镜像）
+- `durable_objects`（Sandbox DO 绑定）
+- `migrations`（SQLite class）
+
+## 一键部署链接（Deploy Button）
+
+你这个仓库的 Deploy Button：
+
+```md
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiadd/cloudflare-sandbox)
 ```
 
-## Setup
+直接访问链接：
 
-1. From the project root, run:
-
-```bash
-npm install
-npm run build
+```txt
+https://deploy.workers.cloudflare.com/?url=https://github.com/xiadd/cloudflare-sandbox
 ```
 
-2. Run locally:
+## 主要 API
 
-```bash
-cd examples/minimal # if you're not already here
-npm run dev
-```
-
-The first run will build the Docker container (2-3 minutes). Subsequent runs are much faster.
-
-## Testing
-
-```bash
-# Test command execution
-curl http://localhost:8787/run
-
-# Test file operations
-curl http://localhost:8787/file
-```
-
-## Deploy
-
-```bash
-npm run deploy
-```
-
-After first deployment, wait 2-3 minutes for container provisioning before making requests.
-
-## Next Steps
-
-This minimal example is the starting point for more complex applications. See the [Sandbox SDK documentation](https://developers.cloudflare.com/sandbox/) for:
-
-- Advanced command execution and streaming
-- Background processes
-- Preview URLs for exposed services
-- Custom Docker images
+- `POST /api/sandbox/start`：启动 sandbox
+- `POST /api/sandbox/stop`：关闭 sandbox（终止进程、取消暴露端口）
+- `GET /api/sandbox/status`：返回当前 Worker 进程内记录的运行状态
+- `GET /api/files`：列目录
+- `GET /api/read`：读文件
+- `POST /api/write`：写文件
+- `POST /api/mkdir`：创建目录
+- `POST /api/delete`：删除文件/目录
+- `POST /api/start-server`：启动并暴露服务
+- `POST /api/stop-server`：停止服务
+- `GET /api/services`：获取已暴露端口
+- `GET /ws`：终端 WebSocket 连接
