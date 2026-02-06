@@ -658,7 +658,7 @@ const HTML = `<!DOCTYPE html>
         ws = null;
         updateTermStatus(sandboxRunning ? '离线' : '未启动', false);
         if (!manualDisconnect) {
-          term.writeln('\r\n\x1b[31m[终端连接已断开]\x1b[0m');
+          term.writeln('\\r\\n\\x1b[31m[终端连接已断开]\\x1b[0m');
         }
         manualDisconnect = false;
       };
@@ -946,8 +946,8 @@ const HTML = `<!DOCTYPE html>
         return;
       }
 
-      term.writeln('\r\n\x1b[36m$ ' + command + '\x1b[0m\r\n');
-      ws.send(JSON.stringify({ type: 'input', data: command + '\r' }));
+      term.writeln('\\r\\n\\x1b[36m$ ' + command + '\\x1b[0m\\r\\n');
+      ws.send(JSON.stringify({ type: 'input', data: command + '\\r' }));
     }
 
     function getRunCommand(path) {
