@@ -588,7 +588,7 @@ const HTML = `<!DOCTYPE html>
     function normalizeClientPath(input, fallback) {
       var raw = (input || fallback || ROOT_PATH).trim();
       if (!raw) raw = ROOT_PATH;
-      raw = raw.replace(/\\/g, '/');
+      raw = raw.replace(/\\\\/g, '/');
       if (raw[0] !== '/') raw = '/' + raw;
       var parts = raw.split('/');
       var out = [];
