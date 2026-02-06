@@ -29,6 +29,20 @@
 			}
 		]
 	},
+	"r2_buckets": [
+		{
+			"binding": "CODE_BUCKET",
+			"bucket_name": "cloudflare-sandbox-files"
+		}
+	],
+	"vars": {
+		"GITHUB_CLIENT_ID": "Ov23liSnoAA7tWYmGP7I",
+		"GITHUB_ALLOWED_ORG": "WhiteMatrixTech",
+		"GITHUB_ALLOWED_TEAM": "",
+		"R2_BUCKET_NAME": "cloudflare-sandbox-files",
+		"R2_ACCOUNT_ID": "REPLACE_WITH_YOUR_ACCOUNT_ID",
+		"R2_S3_ENDPOINT": "https://REPLACE_WITH_YOUR_ACCOUNT_ID.r2.cloudflarestorage.com"
+	},
 	"migrations": [
 		{
 			"new_sqlite_classes": [

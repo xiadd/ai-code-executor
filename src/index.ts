@@ -1,10 +1,106 @@
-import { getSandbox, proxyToSandbox, type Sandbox } from "@cloudflare/sandbox";
+import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 
 export { Sandbox } from "@cloudflare/sandbox";
 
 type Env = {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  CODE_BUCKET: R2Bucket;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  GITHUB_ALLOWED_ORG?: string;
+  GITHUB_ALLOWED_TEAM?: string;
+  R2_BUCKET_NAME?: string;
+  R2_S3_ENDPOINT?: string;
+  R2_ACCOUNT_ID?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
 };
+
+const LOGIN_HTML = (reason = "", nextPath = "/") => `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Sandbox IDE</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: radial-gradient(circle at top left, #2b2f48, #11131a 52%, #090a0f);
+      color: #e9edf5;
+      font-family: "SF Pro Display", "Segoe UI", sans-serif;
+    }
+    .page {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      width: 420px;
+      max-width: 100%;
+      background: rgba(26, 29, 42, 0.82);
+      border: 1px solid rgba(122, 141, 199, 0.25);
+      border-radius: 14px;
+      padding: 22px;
+      box-shadow: 0 18px 40px rgba(4, 6, 13, 0.45);
+    }
+    .title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: #f5f7ff;
+    }
+    .desc {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #c6d0e9;
+      margin-bottom: 14px;
+    }
+    .error {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #ffd8d8;
+      background: rgba(176, 56, 56, 0.35);
+      border: 1px solid rgba(210, 84, 84, 0.6);
+    }
+    .btn {
+      width: 100%;
+      height: 40px;
+      border: 1px solid #5f709f;
+      border-radius: 8px;
+      background: #223666;
+      color: #f4f7ff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { background: #2a3f78; }
+    .foot {
+      margin-top: 10px;
+      font-size: 11px;
+      color: #99a6c7;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <div class="title">GitHub 登录</div>
+      <div class="desc">只有指定 GitHub 组织成员可访问此 Sandbox IDE。</div>
+      ${reason ? `<div class="error">${escapeHtmlText(reason)}</div>` : ""}
+      <button class="btn" onclick="location.href='/auth/login?next=${encodeURIComponent(
+        nextPath,
+      )}'">使用 GitHub 登录</button>
+      <div class="foot">登录成功后自动跳转到 IDE 页面。</div>
+    </div>
+  </div>
+</body>
+</html>`;
 
 const HTML = `<!DOCTYPE html>
 <html>
@@ -14,377 +110,388 @@ const HTML = `<!DOCTYPE html>
   <title>Sandbox IDE</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%;
+      font-family: "SF Pro Display", "Segoe UI", sans-serif;
       background: #1e1e1e;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #d4d4d4;
       overflow: hidden;
-      color: #ccc;
     }
     .app {
+      height: 100vh;
       display: flex;
       flex-direction: column;
-      height: 100vh;
     }
     .header {
-      background: #2d2d30;
-      padding: 8px 16px;
+      height: 46px;
+      padding: 0 12px;
+      border-bottom: 1px solid #2a2a2a;
+      background: #252526;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      border-bottom: 1px solid #333;
+      gap: 10px;
       flex-shrink: 0;
     }
     .header h1 {
-      font-size: 14px;
-      font-weight: 500;
-      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      color: #f3f3f3;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
     }
     .toolbar {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
+      justify-content: flex-end;
     }
     button {
-      padding: 6px 12px;
-      border: none;
+      border: 1px solid #3d3d3d;
+      background: #313131;
+      color: #e9e9e9;
       border-radius: 4px;
-      background: #0e639c;
-      color: #fff;
       font-size: 12px;
+      line-height: 1;
+      padding: 7px 10px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 4px;
     }
-    button:hover { background: #1177bb; }
-    button.secondary {
-      background: #3c3c3c;
-    }
-    button.secondary:hover { background: #4c4c4c; }
-    button.success { background: #238636; }
-    button.success:hover { background: #2ea043; }
-    button.warning { background: #9e6a03; }
-    button.warning:hover { background: #b47d0b; }
+    button:hover { background: #3a3a3a; }
+    button.primary { background: #0e639c; border-color: #1177bb; }
+    button.primary:hover { background: #1177bb; }
+    button.success { background: #1f7a34; border-color: #2c8f43; }
+    button.success:hover { background: #2c8f43; }
+    button.warning { background: #8b5f00; border-color: #9f7000; }
+    button.warning:hover { background: #9f7000; }
+
     .main {
       flex: 1;
       display: flex;
-      overflow: hidden;
+      min-height: 0;
     }
-    /* 左侧终端 */
-    .left-panel {
-      width: 50%;
+
+    .sidebar {
+      width: 280px;
+      min-width: 220px;
+      max-width: 380px;
+      border-right: 1px solid #2a2a2a;
+      background: #1b1b1c;
       display: flex;
       flex-direction: column;
-      border-right: 1px solid #333;
+      min-height: 0;
     }
+
     .panel-header {
+      height: 34px;
+      border-bottom: 1px solid #2a2a2a;
       background: #252526;
-      padding: 8px 12px;
+      color: #bdbdbd;
       font-size: 11px;
+      letter-spacing: 0.6px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #bbb;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      padding: 0 10px;
+      flex-shrink: 0;
+      gap: 8px;
     }
-    .terminal-container {
-      flex: 1;
-      padding: 4px;
-      background: #0c0c0c;
+
+    .path-label {
+      font-size: 11px;
+      color: #9f9f9f;
+      padding: 8px 10px;
+      border-bottom: 1px solid #252526;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-shrink: 0;
     }
-    #terminal {
-      width: 100%;
-      height: 100%;
-    }
-    /* 右侧文件管理 */
-    .right-panel {
-      width: 50%;
-      display: flex;
-      flex-direction: column;
-    }
-    .file-explorer {
-      height: 35%;
-      display: flex;
-      flex-direction: column;
-      border-bottom: 1px solid #333;
-    }
+
     .file-tree {
       flex: 1;
       overflow: auto;
       padding: 8px;
-      font-size: 13px;
+      min-height: 0;
     }
+
     .file-item {
-      padding: 4px 8px;
-      cursor: pointer;
-      border-radius: 3px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .file-item:hover { background: #2a2d2e; }
-    .file-item.selected { background: #094771; }
-    .file-item .icon { font-size: 14px; }
-    .file-item .name { flex: 1; }
-    .file-item .actions { display: none; }
-    .file-item:hover .actions { display: flex; gap: 4px; }
-    .file-item .actions button {
-      padding: 2px 6px;
-      font-size: 10px;
-      background: transparent;
-      border: 1px solid #555;
-    }
-    .folder-contents { padding-left: 16px; }
-    .empty-state {
-      padding: 20px;
-      text-align: center;
-      color: #666;
-      font-size: 12px;
-    }
-    /* 编辑器 */
-    .editor {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-    }
-    .editor-tabs {
-      background: #2d2d30;
-      display: flex;
-      overflow-x: auto;
-      min-height: 35px;
-    }
-    .tab {
-      padding: 8px 16px;
-      background: #2d2d30;
-      border-right: 1px solid #1e1e1e;
-      cursor: pointer;
-      font-size: 12px;
       display: flex;
       align-items: center;
       gap: 8px;
+      width: 100%;
+      border-radius: 4px;
+      padding: 6px 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #d4d4d4;
+    }
+    .file-item:hover { background: #2a2d2e; }
+    .file-item .icon { width: 18px; text-align: center; }
+    .file-item .name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .tab:hover { background: #3c3c3c; }
-    .tab.active { background: #1e1e1e; border-top: 2px solid #007acc; }
-    .tab .close { opacity: 0.5; font-size: 14px; }
-    .tab .close:hover { opacity: 1; color: #fff; }
-    .tab.new-tab {
-      padding: 8px 12px;
-      background: transparent;
-      border: none;
-    }
-    .editor-content {
-      flex: 1;
+    .file-item .actions {
+      opacity: 0;
+      pointer-events: none;
       display: flex;
+      gap: 4px;
+      transition: opacity 0.12s ease;
     }
-    textarea {
+    .file-item:hover .actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .file-item .actions button {
+      padding: 3px 6px;
+      font-size: 10px;
+    }
+
+    .workspace {
       flex: 1;
-      background: #1e1e1e;
-      color: #d4d4d4;
-      border: none;
-      padding: 16px;
-      font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-      font-size: 14px;
-      line-height: 1.5;
-      resize: none;
-      outline: none;
-      tab-size: 2;
-    }
-    .no-editor {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #666;
-      font-size: 14px;
-    }
-    /* 服务面板 */
-    .services-panel {
-      height: 25%;
+      min-width: 0;
       display: flex;
       flex-direction: column;
-      border-top: 1px solid #333;
+      min-height: 0;
+    }
+
+    .editor-panel {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid #2a2a2a;
+    }
+
+    .editor-tabs {
+      min-height: 34px;
+      max-height: 34px;
+      overflow-x: auto;
+      display: flex;
+      background: #2d2d30;
+      border-bottom: 1px solid #1f1f1f;
+      flex-shrink: 0;
+    }
+
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-right: 1px solid #1f1f1f;
+      padding: 0 12px;
+      font-size: 12px;
+      color: #cccccc;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .tab:hover { background: #36363a; }
+    .tab.active {
       background: #1e1e1e;
+      color: #ffffff;
+      border-top: 2px solid #0e639c;
     }
-    .services-list {
+    .tab .close {
+      font-size: 13px;
+      opacity: 0.6;
+      cursor: pointer;
+    }
+    .tab .close:hover { opacity: 1; }
+    .tab.new-tab {
+      border-right: none;
+      min-width: 34px;
+      justify-content: center;
+      font-size: 16px;
+      padding: 0;
+    }
+
+    .editor-content {
       flex: 1;
-      overflow: auto;
-      padding: 8px;
+      min-height: 0;
+      display: flex;
     }
-    .service-item {
+
+    textarea {
+      width: 100%;
+      height: 100%;
+      border: none;
+      resize: none;
+      outline: none;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-size: 14px;
+      line-height: 1.6;
+      font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+      padding: 14px;
+      tab-size: 2;
+    }
+
+    .terminal-panel {
+      height: 38%;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: #111;
+    }
+
+    .terminal-header {
+      height: 34px;
+      border-bottom: 1px solid #252525;
+      background: #1a1a1b;
       display: flex;
       align-items: center;
-      gap: 12px;
-      padding: 8px 12px;
-      background: #252526;
-      border-radius: 4px;
-      margin-bottom: 8px;
-      font-size: 12px;
-    }
-    .service-item .port {
-      background: #007acc;
-      color: #fff;
-      padding: 2px 8px;
-      border-radius: 3px;
-      font-weight: bold;
-    }
-    .service-item .url {
-      flex: 1;
-      color: #4ec9b0;
-      font-family: monospace;
-    }
-    .service-item .url a {
-      color: #4ec9b0;
-      text-decoration: none;
-    }
-    .service-item .url a:hover {
-      text-decoration: underline;
-    }
-    .service-item .status {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      color: #4caf50;
-    }
-    .service-item .status::before {
-      content: '';
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #4caf50;
-    }
-    /* 状态栏 */
-    .status-bar {
-      background: #007acc;
-      color: #fff;
-      padding: 4px 16px;
-      font-size: 12px;
-      display: flex;
       justify-content: space-between;
+      padding: 0 10px;
+      font-size: 12px;
+      color: #b8b8b8;
+      flex-shrink: 0;
     }
-    .status-bar.error { background: #f44336; }
-    .status-bar.success { background: #4caf50; }
-    /* 模态框 */
+
+    .terminal-container {
+      flex: 1;
+      min-height: 0;
+      padding: 6px;
+    }
+
+    #terminal {
+      width: 100%;
+      height: 100%;
+    }
+
+    .empty-state, .no-editor {
+      margin: auto;
+      color: #7c7c7c;
+      font-size: 13px;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .status-bar {
+      height: 24px;
+      background: #0e639c;
+      color: #fff;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      flex-shrink: 0;
+      gap: 12px;
+    }
+    .status-bar.error { background: #b93030; }
+    .status-bar.success { background: #1f7a34; }
+
     .modal-overlay {
       position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.7);
+      inset: 0;
+      background: rgba(0, 0, 0, 0.64);
       display: none;
       align-items: center;
       justify-content: center;
       z-index: 1000;
     }
     .modal-overlay.active { display: flex; }
+
     .modal {
-      background: #252526;
-      padding: 20px;
-      border-radius: 6px;
-      min-width: 400px;
+      width: 420px;
+      max-width: calc(100vw - 24px);
+      background: #232325;
+      border: 1px solid #3b3b3b;
+      border-radius: 8px;
+      padding: 16px;
     }
     .modal h3 {
-      margin-bottom: 16px;
       font-size: 14px;
-      font-weight: 500;
-    }
-    .modal .field {
       margin-bottom: 12px;
+      color: #f2f2f2;
     }
-    .modal label {
-      display: block;
-      font-size: 12px;
-      color: #bbb;
-      margin-bottom: 4px;
-    }
-    .modal input, .modal select {
+    .modal input {
       width: 100%;
-      padding: 8px 12px;
-      background: #3c3c3c;
-      border: 1px solid #555;
-      color: #fff;
-      border-radius: 4px;
-      font-size: 13px;
+      height: 36px;
+      border-radius: 6px;
+      border: 1px solid #4a4a4a;
+      background: #1a1a1b;
+      color: #f0f0f0;
+      padding: 0 10px;
+      margin-bottom: 12px;
+      outline: none;
     }
+    .modal input:focus { border-color: #0e639c; }
     .modal .buttons {
       display: flex;
       justify-content: flex-end;
       gap: 8px;
-      margin-top: 16px;
+    }
+
+    @media (max-width: 920px) {
+      .header {
+        height: auto;
+        padding: 8px;
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .toolbar { width: 100%; justify-content: flex-start; }
+      .sidebar { width: 220px; }
+      .terminal-panel { height: 42%; }
     }
   </style>
 </head>
 <body>
   <div class="app">
     <div class="header">
-      <h1>🚀 Sandbox IDE</h1>
+      <h1>Sandbox IDE (R2 Persistent Files)</h1>
       <div class="toolbar">
-        <button onclick="startSandbox()">🟢 启动 Sandbox</button>
-        <button onclick="stopSandbox()" class="warning">⏹ 关闭 Sandbox</button>
-        <button class="secondary" onclick="reconnectTerminal()">🔌 重连终端</button>
-        <button onclick="runCurrentFile()" class="success">▶ 运行</button>
-        <button onclick="saveCurrentFile()">💾 保存</button>
-        <button onclick="showStartServerModal()">🌐 启动服务</button>
-        <button onclick="refreshFiles()">🔄 刷新</button>
-        <button class="secondary" onclick="clearTerminal()">🗑 清屏</button>
+        <button onclick="startSandbox()" class="primary">启动 Sandbox</button>
+        <button onclick="stopSandbox()" class="warning">关闭 Sandbox</button>
+        <button onclick="reconnectTerminal()">重连终端</button>
+        <button onclick="runCurrentFile()" class="success">运行当前文件</button>
+        <button onclick="saveCurrentFile()">保存</button>
+        <button onclick="refreshFiles()">刷新文件</button>
+        <button onclick="clearTerminal()">清屏</button>
+        <button onclick="logout()">退出登录</button>
       </div>
     </div>
 
     <div class="main">
-      <!-- 左侧终端 -->
-      <div class="left-panel" id="leftPanel">
+      <aside class="sidebar">
         <div class="panel-header">
-          <span>终端</span>
-          <span class="status-indicator" id="termStatus">● 离线</span>
-        </div>
-        <div class="terminal-container">
-          <div id="terminal"></div>
-        </div>
-      </div>
-
-      <!-- 右侧文件管理 + 编辑器 + 服务 -->
-      <div class="right-panel">
-        <!-- 文件树 -->
-        <div class="file-explorer">
-          <div class="panel-header">
-            <span>文件资源管理器</span>
-            <div class="toolbar">
-              <button onclick="showNewFileModal()" style="padding: 4px 8px;">+ 文件</button>
-              <button onclick="showNewFolderModal()" style="padding: 4px 8px;">+ 文件夹</button>
-            </div>
-          </div>
-          <div class="file-tree" id="fileTree">
-            <div class="empty-state">加载中...</div>
+          <span>文件资源管理器</span>
+          <div class="toolbar">
+            <button onclick="showNewFileModal()" style="padding:4px 8px;">+ 文件</button>
+            <button onclick="showNewFolderModal()" style="padding:4px 8px;">+ 文件夹</button>
           </div>
         </div>
+        <div class="path-label" id="currentPathLabel">/</div>
+        <div class="file-tree" id="fileTree">
+          <div class="empty-state">加载中...</div>
+        </div>
+      </aside>
 
-        <!-- 编辑器 -->
-        <div class="editor">
+      <section class="workspace">
+        <section class="editor-panel">
           <div class="editor-tabs" id="editorTabs">
             <div class="tab new-tab" onclick="showNewFileModal()">+</div>
           </div>
           <div class="editor-content" id="editorContent">
-            <div class="no-editor">选择一个文件开始编辑</div>
+            <div class="no-editor">从左侧选择或创建文件</div>
           </div>
-        </div>
+        </section>
 
-        <!-- 服务面板 -->
-        <div class="services-panel">
-          <div class="panel-header">
-            <span>已暴露的服务</span>
-            <div class="toolbar">
-              <button onclick="refreshServices()" style="padding: 4px 8px;">刷新</button>
-              <button class="secondary" onclick="stopAllServices()" style="padding: 4px 8px;">停止全部</button>
-            </div>
+        <section class="terminal-panel">
+          <div class="terminal-header">
+            <span>终端</span>
+            <span id="termStatus">● 未启动</span>
           </div>
-          <div class="services-list" id="servicesList">
-            <div class="empty-state">暂无运行的服务，点击"启动服务"按钮</div>
+          <div class="terminal-container">
+            <div id="terminal"></div>
           </div>
-        </div>
-      </div>
+        </section>
+      </section>
     </div>
 
     <div class="status-bar" id="statusBar">
@@ -393,64 +500,24 @@ const HTML = `<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- 新建文件模态框 -->
   <div class="modal-overlay" id="newFileModal">
     <div class="modal">
       <h3>新建文件</h3>
-      <input type="text" id="newFileName" placeholder="文件名 (如: main.py)" />
+      <input type="text" id="newFileName" placeholder="例如: main.py" />
       <div class="buttons">
-        <button class="secondary" onclick="hideModal('newFileModal')">取消</button>
-        <button onclick="createNewFile()">创建</button>
+        <button onclick="hideModal('newFileModal')">取消</button>
+        <button class="primary" onclick="createNewFile()">创建</button>
       </div>
     </div>
   </div>
 
-  <!-- 新建文件夹模态框 -->
   <div class="modal-overlay" id="newFolderModal">
     <div class="modal">
       <h3>新建文件夹</h3>
-      <input type="text" id="newFolderName" placeholder="文件夹名" />
+      <input type="text" id="newFolderName" placeholder="例如: src" />
       <div class="buttons">
-        <button class="secondary" onclick="hideModal('newFolderModal')">取消</button>
-        <button onclick="createNewFolder()">创建</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 启动服务模态框 -->
-  <div class="modal-overlay" id="startServerModal">
-    <div class="modal">
-      <h3>启动 HTTP 服务</h3>
-      <div class="field">
-        <label>端口</label>
-        <select id="serverPort">
-          <option value="8080">8080</option>
-          <option value="5000">5000</option>
-          <option value="8000">8000</option>
-          <option value="5173">5173 (Vite)</option>
-          <option value="3001">3001</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>启动命令</label>
-        <select id="serverCommand" onchange="updateServerCommand()">
-          <option value='python -m http.server {port}'>Python HTTP Server</option>
-          <option value='python3 -m http.server {port}'>Python3 HTTP Server</option>
-          <option value='python app.py'>Python Flask (端口在代码中指定)</option>
-          <option value='uvicorn main:app --host 0.0.0.0 --port {port}'>Python FastAPI (Uvicorn)</option>
-          <option value='node server.js'>Node.js (端口在代码中指定)</option>
-          <option value='npx vite --host 0.0.0.0 --port {port}'>Vite Dev Server</option>
-          <option value='npx http-server -p {port}'>Node HTTP Server</option>
-          <option value='custom'>自定义命令...</option>
-        </select>
-      </div>
-      <div class="field" id="customCommandField" style="display:none">
-        <label>自定义命令</label>
-        <input type="text" id="customCommand" placeholder='如: python -m http.server 8080' />
-      </div>
-      <div class="buttons">
-        <button class="secondary" onclick="hideModal('startServerModal')">取消</button>
-        <button onclick="startServer()">启动并暴露</button>
+        <button onclick="hideModal('newFolderModal')">取消</button>
+        <button class="primary" onclick="createNewFolder()">创建</button>
       </div>
     </div>
   </div>
@@ -459,48 +526,37 @@ const HTML = `<!DOCTYPE html>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 
   <script>
-    // ============ 全局状态 ============
-    const sessionId = 'ide-' + Math.random().toString(36).substring(2, 10);
+    const savedSession = localStorage.getItem('sandbox-ide-session-id');
+    const sessionId = savedSession || ('ide-' + Math.random().toString(36).slice(2, 10));
+    if (!savedSession) {
+      localStorage.setItem('sandbox-ide-session-id', sessionId);
+    }
+
+    const ROOT_PATH = '/';
+
     let ws = null;
     let connected = false;
     let sandboxRunning = false;
     let manualDisconnect = false;
-    let currentPath = '/workspace';
+    let currentPath = ROOT_PATH;
+
     let openFiles = new Map();
     let activeFile = null;
     let fileTreeData = [];
-    let exposedServices = [];
 
-    // ============ Terminal ============
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
       theme: {
         background: '#0c0c0c',
-        foreground: '#cccccc',
-        cursor: '#cccccc',
-        selectionBackground: '#264f78',
-        black: '#0c0c0c',
-        red: '#c50f1f',
-        green: '#13a10e',
-        yellow: '#c19c00',
-        blue: '#0037da',
-        magenta: '#881798',
-        cyan: '#3a96dd',
-        white: '#cccccc',
-        brightBlack: '#767676',
-        brightRed: '#e74856',
-        brightGreen: '#16c60c',
-        brightYellow: '#f9f1a5',
-        brightBlue: '#3b78ff',
-        brightMagenta: '#b4009e',
-        brightCyan: '#61d6d6',
-        brightWhite: '#f2f2f2'
+        foreground: '#d5d5d5',
+        cursor: '#d5d5d5',
+        selectionBackground: '#264f78'
       },
       scrollback: 10000,
       allowProposedApi: true,
-      cursorStyle: 'block',
+      cursorStyle: 'block'
     });
 
     const fitAddon = new FitAddon.FitAddon();
@@ -508,67 +564,106 @@ const HTML = `<!DOCTYPE html>
     term.open(document.getElementById('terminal'));
     fitAddon.fit();
 
-    // ============ 状态栏 ============
-    function updateStatus(text, type = '') {
+    function updateStatus(text, type) {
       document.getElementById('statusText').textContent = text;
-      document.getElementById('statusBar').className = 'status-bar ' + type;
+      document.getElementById('statusBar').className = 'status-bar ' + (type || '');
     }
 
-    function updateTermStatus(text, connected) {
+    function updateTermStatus(text, isConnected) {
       const el = document.getElementById('termStatus');
       el.textContent = '● ' + text;
-      el.style.color = connected ? '#238636' : '#da3633';
+      el.style.color = isConnected ? '#4caf50' : '#d86161';
     }
 
-    function requireSandbox(actionName = '该操作') {
+    function requireSandbox(actionName) {
       if (sandboxRunning) return true;
-      updateStatus(actionName + '失败：请先启动 Sandbox', 'error');
+      updateStatus((actionName || '操作') + '失败：请先启动 Sandbox', 'error');
       return false;
     }
 
-    // ============ WebSocket ============
+    function updateCurrentPathLabel() {
+      document.getElementById('currentPathLabel').textContent = currentPath;
+    }
+
+    function normalizeClientPath(input, fallback) {
+      var raw = (input || fallback || ROOT_PATH).trim();
+      if (!raw) raw = ROOT_PATH;
+      raw = raw.replace(/\\/g, '/');
+      if (raw[0] !== '/') raw = '/' + raw;
+      var parts = raw.split('/');
+      var out = [];
+      for (var i = 0; i < parts.length; i++) {
+        var p = parts[i];
+        if (!p || p === '.') continue;
+        if (p === '..') {
+          out.pop();
+          continue;
+        }
+        out.push(p);
+      }
+      return out.length ? '/' + out.join('/') : '/';
+    }
+
+    function joinPath(base, name) {
+      if (base === '/') return '/' + name;
+      return base + '/' + name;
+    }
+
+    function getParentPath(path) {
+      if (!path || path === '/') return '/';
+      var parts = path.split('/').filter(Boolean);
+      parts.pop();
+      return parts.length ? '/' + parts.join('/') : '/';
+    }
+
+    function toWorkspacePath(path) {
+      var clean = normalizeClientPath(path, '/');
+      return clean === '/' ? '/workspace' : '/workspace' + clean;
+    }
+
     function connect() {
       if (!sandboxRunning) {
         updateTermStatus('未启动', false);
         return;
       }
 
-      if (ws) { ws.close(); ws = null; }
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
 
       updateTermStatus('连接中...', false);
 
-      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + location.host + '/ws?session=' + sessionId;
+      var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      var wsUrl = protocol + '//' + location.host + '/ws?session=' + encodeURIComponent(sessionId);
 
       ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
 
-      ws.onopen = () => {
+      ws.onopen = function () {
         connected = true;
         updateTermStatus('已连接', true);
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-        refreshFiles();
-        refreshServices();
       };
 
-      ws.onmessage = (event) => {
-        const text = typeof event.data === 'string' 
-          ? event.data 
+      ws.onmessage = function (event) {
+        var text = typeof event.data === 'string'
+          ? event.data
           : new TextDecoder().decode(event.data);
         term.write(text);
       };
 
-      ws.onclose = () => {
+      ws.onclose = function () {
         connected = false;
         ws = null;
         updateTermStatus(sandboxRunning ? '离线' : '未启动', false);
         if (!manualDisconnect) {
-          term.writeln('\\r\\n\\x1b[31m[连接已断开]\\x1b[0m');
+          term.writeln('\r\n\x1b[31m[终端连接已断开]\x1b[0m');
         }
         manualDisconnect = false;
       };
 
-      ws.onerror = () => {
+      ws.onerror = function () {
         connected = false;
         updateTermStatus('错误', false);
       };
@@ -588,23 +683,18 @@ const HTML = `<!DOCTYPE html>
 
     async function checkSandboxStatus() {
       try {
-        const res = await fetch('/api/sandbox/status?session=' + sessionId);
-        const data = await res.json();
+        var res = await fetch('/api/sandbox/status?session=' + encodeURIComponent(sessionId));
+        var data = await res.json();
         sandboxRunning = !!data.running;
+
         if (sandboxRunning) {
-          updateStatus('Sandbox 已就绪', 'success');
+          updateStatus('Sandbox 已运行', 'success');
           connect();
-          await refreshFiles();
-          await refreshServices();
         } else {
           disconnectTerminal();
-          fileTreeData = [];
-          renderFileTree();
-          exposedServices = [];
-          renderServices();
           updateStatus('Sandbox 未启动');
         }
-      } catch {
+      } catch (_err) {
         sandboxRunning = false;
         disconnectTerminal();
         updateStatus('Sandbox 状态检查失败', 'error');
@@ -619,13 +709,15 @@ const HTML = `<!DOCTYPE html>
       }
 
       updateStatus('正在启动 Sandbox...');
+
       try {
-        const res = await fetch('/api/sandbox/start', {
+        var res = await fetch('/api/sandbox/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId })
+          body: JSON.stringify({ sessionId: sessionId })
         });
-        const data = await res.json();
+        var data = await res.json();
+
         if (!data.success) {
           updateStatus('启动失败: ' + (data.error || '未知错误'), 'error');
           return;
@@ -633,10 +725,14 @@ const HTML = `<!DOCTYPE html>
 
         sandboxRunning = true;
         connect();
-        await refreshFiles();
-        await refreshServices();
-        updateStatus('Sandbox 已启动', 'success');
-      } catch {
+
+        if (data.mounted) {
+          updateStatus('Sandbox 已启动（已挂载 R2）', 'success');
+        } else {
+          var detail = data.mountMessage ? ('，' + data.mountMessage) : '';
+          updateStatus('Sandbox 已启动（未挂载 R2' + detail + '）', 'success');
+        }
+      } catch (_err) {
         updateStatus('启动 Sandbox 失败', 'error');
       }
     }
@@ -646,16 +742,21 @@ const HTML = `<!DOCTYPE html>
         updateStatus('Sandbox 当前未运行');
         return;
       }
-      if (!confirm('确定要关闭当前 Sandbox 吗？这会终止所有进程和服务。')) return;
+
+      if (!confirm('确定要关闭 Sandbox 吗？这会终止当前运行中的进程。')) {
+        return;
+      }
 
       updateStatus('正在关闭 Sandbox...');
+
       try {
-        const res = await fetch('/api/sandbox/stop', {
+        var res = await fetch('/api/sandbox/stop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId })
+          body: JSON.stringify({ sessionId: sessionId })
         });
-        const data = await res.json();
+        var data = await res.json();
+
         if (!data.success) {
           updateStatus('关闭失败: ' + (data.error || '未知错误'), 'error');
           return;
@@ -663,16 +764,8 @@ const HTML = `<!DOCTYPE html>
 
         sandboxRunning = false;
         disconnectTerminal();
-        fileTreeData = [];
-        renderFileTree();
-        exposedServices = [];
-        renderServices();
-        openFiles.clear();
-        activeFile = null;
-        renderTabs();
-        renderEditor();
         updateStatus('Sandbox 已关闭', 'success');
-      } catch {
+      } catch (_err) {
         updateStatus('关闭 Sandbox 失败', 'error');
       }
     }
@@ -683,74 +776,77 @@ const HTML = `<!DOCTYPE html>
       connect();
     }
 
-    term.onData((data) => {
-      if (connected && ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
+    term.onData(function (data) {
+      if (connected && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data: data }));
       }
     });
 
-    window.addEventListener('resize', () => {
+    window.addEventListener('resize', function () {
       fitAddon.fit();
       if (connected && ws) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
     });
 
-    // ============ 文件管理 ============
     async function refreshFiles() {
-      if (!sandboxRunning) {
-        fileTreeData = [];
-        renderFileTree();
-        return;
-      }
-
+      updateCurrentPathLabel();
       try {
-        const res = await fetch('/api/files?session=' + sessionId + '&path=' + encodeURIComponent(currentPath));
-        const data = await res.json();
-        if (data.success) {
-          fileTreeData = data.files || [];
-          renderFileTree();
+        var res = await fetch('/api/files?session=' + encodeURIComponent(sessionId) + '&path=' + encodeURIComponent(currentPath));
+        var data = await res.json();
+
+        if (!data.success) {
+          updateStatus('加载文件失败: ' + (data.error || '未知错误'), 'error');
           return;
         }
-        updateStatus('加载文件失败: ' + (data.error || '未知错误'), 'error');
-      } catch (err) {
-        console.error('Failed to load files:', err);
+
+        fileTreeData = data.files || [];
+        renderFileTree();
+      } catch (_err) {
         updateStatus('加载文件失败', 'error');
       }
     }
 
     function renderFileTree() {
-      const container = document.getElementById('fileTree');
-      if (!sandboxRunning) {
-        container.innerHTML = '<div class="empty-state">Sandbox 未启动，点击上方“启动 Sandbox”</div>';
+      var container = document.getElementById('fileTree');
+      var html = '';
+
+      if (currentPath !== '/') {
+        var upPath = encodeURIComponent(getParentPath(currentPath));
+        html += '<div class="file-item" onclick="openFolderFromEncoded(\'' + upPath + '\')">'
+          + '<span class="icon">↩</span><span class="name">..</span></div>';
+      }
+
+      if (!fileTreeData.length) {
+        html += '<div class="empty-state">当前目录为空</div>';
+        container.innerHTML = html;
         return;
       }
 
-      if (fileTreeData.length === 0) {
-        container.innerHTML = '<div class="empty-state">空文件夹</div>';
-        return;
+      for (var i = 0; i < fileTreeData.length; i++) {
+        var file = fileTreeData[i];
+        var encodedPath = encodeURIComponent(file.path);
+        var isDir = file.type === 'directory';
+        var icon = isDir ? '📁' : getFileIcon(file.name);
+        var openFn = isDir ? 'openFolderFromEncoded' : 'openFileFromEncoded';
+
+        html += '<div class="file-item" onclick="' + openFn + '(\'' + encodedPath + '\')">'
+          + '<span class="icon">' + icon + '</span>'
+          + '<span class="name">' + escapeHtml(file.name) + '</span>'
+          + '<div class="actions" onclick="event.stopPropagation()">'
+          + '<button onclick="deleteFileFromEncoded(\'' + encodedPath + '\')">删除</button>'
+          + '</div>'
+          + '</div>';
       }
 
-      container.innerHTML = fileTreeData.map(file => {
-        const isDir = file.type === 'directory';
-        const icon = isDir ? '📁' : getFileIcon(file.name);
-        return \`
-          <div class="file-item" onclick="\${isDir ? 'openFolder' : 'openFile'}('\${file.path}')">
-            <span class="icon">\${icon}</span>
-            <span class="name">\${file.name}</span>
-            <div class="actions" onclick="event.stopPropagation()">
-              <button onclick="deleteFile('\${file.path}')">删除</button>
-            </div>
-          </div>
-        \`;
-      }).join('');
+      container.innerHTML = html;
     }
 
     function getFileIcon(filename) {
       if (filename.endsWith('.py')) return '🐍';
       if (filename.endsWith('.js')) return '📜';
       if (filename.endsWith('.ts')) return '🔷';
-      if (filename.endsWith('.json')) return '📋';
+      if (filename.endsWith('.json')) return '🧩';
       if (filename.endsWith('.md')) return '📝';
       if (filename.endsWith('.html')) return '🌐';
       if (filename.endsWith('.css')) return '🎨';
@@ -758,54 +854,73 @@ const HTML = `<!DOCTYPE html>
       return '📄';
     }
 
+    function openFileFromEncoded(encoded) {
+      openFile(decodeURIComponent(encoded));
+    }
+
+    function openFolderFromEncoded(encoded) {
+      openFolder(decodeURIComponent(encoded));
+    }
+
+    function deleteFileFromEncoded(encoded) {
+      deleteFile(decodeURIComponent(encoded));
+    }
+
     async function openFile(path) {
-      if (!requireSandbox('打开文件')) return;
       try {
-        const res = await fetch('/api/read?session=' + sessionId + '&path=' + encodeURIComponent(path));
-        const data = await res.json();
-        if (data.success) {
-          openFiles.set(path, { content: data.content, modified: false });
-          activeFile = path;
-          renderTabs();
-          renderEditor();
+        var res = await fetch('/api/read?session=' + encodeURIComponent(sessionId) + '&path=' + encodeURIComponent(path));
+        var data = await res.json();
+
+        if (!data.success) {
+          updateStatus('读取文件失败: ' + (data.error || '未知错误'), 'error');
           return;
         }
-        updateStatus('读取文件失败: ' + (data.error || '未知错误'), 'error');
-      } catch (err) {
+
+        openFiles.set(path, { content: data.content, modified: false });
+        activeFile = path;
+        renderTabs();
+        renderEditor();
+      } catch (_err) {
         updateStatus('读取文件失败', 'error');
       }
     }
 
     function openFolder(path) {
-      currentPath = path;
+      currentPath = normalizeClientPath(path, '/');
       refreshFiles();
     }
 
     async function saveCurrentFile() {
-      if (!requireSandbox('保存文件')) return;
       if (!activeFile) return;
-      
-      const textarea = document.getElementById('editorTextarea');
+
+      var textarea = document.getElementById('editorTextarea');
       if (!textarea) return;
 
-      const content = textarea.value;
-      
+      var content = textarea.value;
+
       try {
-        const res = await fetch('/api/write', {
+        var res = await fetch('/api/write', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, path: activeFile, content })
+          body: JSON.stringify({
+            sessionId: sessionId,
+            path: activeFile,
+            content: content
+          })
         });
-        const data = await res.json();
-        if (data.success) {
-          openFiles.get(activeFile).content = content;
-          openFiles.get(activeFile).modified = false;
-          renderTabs();
-          updateStatus('文件已保存', 'success');
+
+        var data = await res.json();
+        if (!data.success) {
+          updateStatus('保存失败: ' + (data.error || '未知错误'), 'error');
           return;
         }
-        updateStatus('保存失败: ' + (data.error || '未知错误'), 'error');
-      } catch (err) {
+
+        openFiles.get(activeFile).content = content;
+        openFiles.get(activeFile).modified = false;
+        renderTabs();
+        updateStatus('文件已保存', 'success');
+        await refreshFiles();
+      } catch (_err) {
         updateStatus('保存失败', 'error');
       }
     }
@@ -819,69 +934,91 @@ const HTML = `<!DOCTYPE html>
 
       await saveCurrentFile();
 
-      const command = getRunCommand(activeFile);
-      if (command && connected && ws) {
-        term.writeln('\\r\\n\\x1b[36m$ ' + command + '\\x1b[0m\\r\\n');
-        ws.send(JSON.stringify({ type: 'input', data: command + '\\r' }));
+      var command = getRunCommand(activeFile);
+      if (!command) {
+        updateStatus('当前文件类型暂不支持一键运行', 'error');
+        return;
       }
+
+      if (!connected || !ws || ws.readyState !== WebSocket.OPEN) {
+        updateStatus('终端未连接，正在重连...', 'error');
+        reconnectTerminal();
+        return;
+      }
+
+      term.writeln('\r\n\x1b[36m$ ' + command + '\x1b[0m\r\n');
+      ws.send(JSON.stringify({ type: 'input', data: command + '\r' }));
     }
 
     function getRunCommand(path) {
-      if (path.endsWith('.py')) return 'python3 "' + path + '"';
-      if (path.endsWith('.js')) return 'node "' + path + '"';
-      if (path.endsWith('.sh')) return 'bash "' + path + '"';
+      var workspacePath = toWorkspacePath(path);
+      if (path.endsWith('.py')) return 'python3 "' + workspacePath + '"';
+      if (path.endsWith('.js')) return 'node "' + workspacePath + '"';
+      if (path.endsWith('.ts')) return 'npx tsx "' + workspacePath + '"';
+      if (path.endsWith('.sh')) return 'bash "' + workspacePath + '"';
       return null;
     }
 
-    // ============ 编辑器 ============
     function renderTabs() {
-      const tabsContainer = document.getElementById('editorTabs');
-      let html = '';
-      
-      openFiles.forEach((file, path) => {
-        const filename = path.split('/').pop();
-        const isActive = path === activeFile;
-        const modified = file.modified ? ' ●' : '';
-        html += \`
-          <div class="tab \${isActive ? 'active' : ''}" onclick="switchTab('\${path}')">
-            <span>\${filename}\${modified}</span>
-            <span class="close" onclick="closeTab('\${path}', event)">×</span>
-          </div>
-        \`;
+      var tabsContainer = document.getElementById('editorTabs');
+      var html = '';
+
+      openFiles.forEach(function (file, path) {
+        var filename = path.split('/').pop();
+        var encodedPath = encodeURIComponent(path);
+        var isActive = path === activeFile;
+        var modified = file.modified ? ' ●' : '';
+
+        html += '<div class="tab ' + (isActive ? 'active' : '') + '" onclick="switchTabFromEncoded(\'' + encodedPath + '\')">'
+          + '<span>' + escapeHtml(filename + modified) + '</span>'
+          + '<span class="close" onclick="closeTabFromEncoded(\'' + encodedPath + '\', event)">×</span>'
+          + '</div>';
       });
-      
+
       html += '<div class="tab new-tab" onclick="showNewFileModal()">+</div>';
       tabsContainer.innerHTML = html;
     }
 
+    function switchTabFromEncoded(encoded) {
+      switchTab(decodeURIComponent(encoded));
+    }
+
+    function closeTabFromEncoded(encoded, event) {
+      closeTab(decodeURIComponent(encoded), event);
+    }
+
     function renderEditor() {
-      const container = document.getElementById('editorContent');
+      var container = document.getElementById('editorContent');
       if (!activeFile) {
-        container.innerHTML = '<div class="no-editor">选择一个文件开始编辑</div>';
+        container.innerHTML = '<div class="no-editor">从左侧选择或创建文件</div>';
         return;
       }
 
-      const file = openFiles.get(activeFile);
+      var file = openFiles.get(activeFile);
       container.innerHTML = '<textarea id="editorTextarea" spellcheck="false">' + escapeHtml(file.content) + '</textarea>';
-      
-      const textarea = document.getElementById('editorTextarea');
+
+      var textarea = document.getElementById('editorTextarea');
       textarea.focus();
-      
-      textarea.addEventListener('input', () => {
-        openFiles.get(activeFile).modified = true;
-        renderTabs();
+
+      textarea.addEventListener('input', function () {
+        var opened = openFiles.get(activeFile);
+        if (opened) {
+          opened.modified = true;
+          renderTabs();
+        }
       });
 
-      textarea.addEventListener('keydown', (e) => {
-        if (e.key === 'Tab') {
-          e.preventDefault();
-          const start = textarea.selectionStart;
-          const end = textarea.selectionEnd;
+      textarea.addEventListener('keydown', function (event) {
+        if (event.key === 'Tab') {
+          event.preventDefault();
+          var start = textarea.selectionStart;
+          var end = textarea.selectionEnd;
           textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
           textarea.selectionStart = textarea.selectionEnd = start + 2;
         }
-        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-          e.preventDefault();
+
+        if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+          event.preventDefault();
           saveCurrentFile();
         }
       });
@@ -897,148 +1034,25 @@ const HTML = `<!DOCTYPE html>
       event.stopPropagation();
       openFiles.delete(path);
       if (activeFile === path) {
-        activeFile = openFiles.size > 0 ? openFiles.keys().next().value : null;
+        var next = openFiles.keys().next();
+        activeFile = next.done ? null : next.value;
       }
       renderTabs();
       renderEditor();
     }
 
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-
-    // ============ 服务管理 ============
-    function updateServerCommand() {
-      const select = document.getElementById('serverCommand');
-      const customField = document.getElementById('customCommandField');
-      customField.style.display = select.value === 'custom' ? 'block' : 'none';
-    }
-
-    async function startServer() {
-      if (!requireSandbox('启动服务')) return;
-
-      const port = document.getElementById('serverPort').value;
-      let command = document.getElementById('serverCommand').value;
-      
-      if (command === 'custom') {
-        command = document.getElementById('customCommand').value;
-      }
-      
-      // 替换 {port} 占位符
-      command = command.replace(/{port}/g, port);
-
-      hideModal('startServerModal');
-      updateStatus('正在启动服务...');
-
-      try {
-        const res = await fetch('/api/start-server', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, port: parseInt(port), command })
-        });
-        
-        const data = await res.json();
-        if (data.success) {
-          updateStatus('服务已启动: ' + data.publicUrl, 'success');
-          // 在终端显示
-          term.writeln('\\r\\n\\x1b[32m[Service Started]\\x1b[0m');
-          term.writeln('\\x1b[36mPublic URL: ' + data.publicUrl + '\\x1b[0m\\r\\n');
-          refreshServices();
-        } else {
-          updateStatus('启动失败: ' + data.error, 'error');
-        }
-      } catch (err) {
-        updateStatus('启动失败', 'error');
-      }
-    }
-
-    async function refreshServices() {
-      if (!sandboxRunning) {
-        exposedServices = [];
-        renderServices();
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/services?session=' + sessionId);
-        const data = await res.json();
-        if (data.success) {
-          exposedServices = data.services || [];
-          renderServices();
-          return;
-        }
-        updateStatus('获取服务列表失败: ' + (data.error || '未知错误'), 'error');
-      } catch (err) {
-        console.error('Failed to load services:', err);
-      }
-    }
-
-    function renderServices() {
-      const container = document.getElementById('servicesList');
-      if (!sandboxRunning) {
-        container.innerHTML = '<div class="empty-state">Sandbox 未启动</div>';
-        return;
-      }
-
-      if (exposedServices.length === 0) {
-        container.innerHTML = '<div class="empty-state">暂无运行的服务，点击"启动服务"按钮</div>';
-        return;
-      }
-
-      container.innerHTML = exposedServices.map(svc => \`
-        <div class="service-item">
-          <span class="port">\${svc.port}</span>
-          <span class="url"><a href="\${svc.url}" target="_blank">\${svc.url}</a></span>
-          <span class="status">运行中</span>
-          <button class="secondary" onclick="stopService(\${svc.port})">停止</button>
-        </div>
-      \`).join('');
-    }
-
-    async function stopService(port) {
-      if (!requireSandbox('停止服务')) return;
-      try {
-        const res = await fetch('/api/stop-server', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, port })
-        });
-        const data = await res.json();
-        if (data.success) {
-          updateStatus('服务已停止', 'success');
-          refreshServices();
-        }
-      } catch (err) {
-        updateStatus('停止失败', 'error');
-      }
-    }
-
-    async function stopAllServices() {
-      if (!confirm('确定要停止所有服务吗？')) return;
-      
-      for (const svc of exposedServices) {
-        await stopService(svc.port);
-      }
-    }
-
-    // ============ 模态框 ============
     function showNewFileModal() {
       document.getElementById('newFileModal').classList.add('active');
-      document.getElementById('newFileName').value = '';
-      document.getElementById('newFileName').focus();
+      var input = document.getElementById('newFileName');
+      input.value = '';
+      input.focus();
     }
 
     function showNewFolderModal() {
       document.getElementById('newFolderModal').classList.add('active');
-      document.getElementById('newFolderName').value = '';
-      document.getElementById('newFolderName').focus();
-    }
-
-    function showStartServerModal() {
-      document.getElementById('startServerModal').classList.add('active');
-      updateServerCommand();
+      var input = document.getElementById('newFolderName');
+      input.value = '';
+      input.focus();
     }
 
     function hideModal(id) {
@@ -1046,73 +1060,90 @@ const HTML = `<!DOCTYPE html>
     }
 
     async function createNewFile() {
-      if (!requireSandbox('创建文件')) return;
-      const name = document.getElementById('newFileName').value.trim();
+      var name = (document.getElementById('newFileName').value || '').trim();
       if (!name) return;
 
-      const path = currentPath + '/' + name;
-      
+      var path = joinPath(currentPath, name);
+
       try {
-        const res = await fetch('/api/write', {
+        var res = await fetch('/api/write', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, path, content: '' })
+          body: JSON.stringify({ sessionId: sessionId, path: path, content: '' })
         });
-        const data = await res.json();
-        if (data.success) {
-          hideModal('newFileModal');
-          refreshFiles();
-          openFile(path);
+
+        var data = await res.json();
+        if (!data.success) {
+          updateStatus('创建文件失败: ' + (data.error || '未知错误'), 'error');
+          return;
         }
-      } catch (err) {
+
+        hideModal('newFileModal');
+        await refreshFiles();
+        await openFile(path);
+        updateStatus('文件已创建', 'success');
+      } catch (_err) {
         updateStatus('创建文件失败', 'error');
       }
     }
 
     async function createNewFolder() {
-      if (!requireSandbox('创建文件夹')) return;
-      const name = document.getElementById('newFolderName').value.trim();
+      var name = (document.getElementById('newFolderName').value || '').trim();
       if (!name) return;
 
+      var path = joinPath(currentPath, name);
+
       try {
-        const res = await fetch('/api/mkdir', {
+        var res = await fetch('/api/mkdir', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, path: currentPath + '/' + name })
+          body: JSON.stringify({ sessionId: sessionId, path: path })
         });
-        const data = await res.json();
-        if (data.success) {
-          hideModal('newFolderModal');
-          refreshFiles();
+
+        var data = await res.json();
+        if (!data.success) {
+          updateStatus('创建文件夹失败: ' + (data.error || '未知错误'), 'error');
+          return;
         }
-      } catch (err) {
+
+        hideModal('newFolderModal');
+        await refreshFiles();
+        updateStatus('文件夹已创建', 'success');
+      } catch (_err) {
         updateStatus('创建文件夹失败', 'error');
       }
     }
 
     async function deleteFile(path) {
-      if (!requireSandbox('删除文件')) return;
-      if (!confirm('确定要删除 ' + path.split('/').pop() + ' 吗？')) return;
+      var filename = path.split('/').pop() || path;
+      if (!confirm('确定删除 ' + filename + ' 吗？')) return;
 
       try {
-        const res = await fetch('/api/delete', {
+        var res = await fetch('/api/delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, path })
+          body: JSON.stringify({ sessionId: sessionId, path: path })
         });
-        const data = await res.json();
-        if (data.success) {
-          if (openFiles.has(path)) {
-            openFiles.delete(path);
-            if (activeFile === path) {
-              activeFile = openFiles.size > 0 ? openFiles.keys().next().value : null;
-            }
-            renderTabs();
-            renderEditor();
-          }
-          refreshFiles();
+
+        var data = await res.json();
+        if (!data.success) {
+          updateStatus('删除失败: ' + (data.error || '未知错误'), 'error');
+          return;
         }
-      } catch (err) {
+
+        if (openFiles.has(path)) {
+          openFiles.delete(path);
+          if (activeFile === path) {
+            var next = openFiles.keys().next();
+            activeFile = next.done ? null : next.value;
+          }
+          renderTabs();
+          renderEditor();
+        }
+
+        await refreshFiles();
+        updateStatus('删除成功', 'success');
+      } catch (_err) {
         updateStatus('删除失败', 'error');
       }
     }
@@ -1121,82 +1152,223 @@ const HTML = `<!DOCTYPE html>
       term.clear();
     }
 
-    // 键盘快捷键
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
+    function logout() {
+      location.href = '/auth/logout';
+    }
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = text == null ? '' : String(text);
+      return div.innerHTML;
+    }
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
         hideModal('newFileModal');
         hideModal('newFolderModal');
-        hideModal('startServerModal');
       }
     });
 
-    // 初始化
     document.getElementById('sessionDisplay').textContent = sessionId;
     updateTermStatus('未启动', false);
+    updateCurrentPathLabel();
     checkSandboxStatus();
-    
-    // 定期刷新服务列表
-    setInterval(() => {
-      if (sandboxRunning) {
-        refreshServices();
-      }
-    }, 10000);
+    refreshFiles();
   </script>
 </body>
 </html>`;
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const WORKSPACE_ROOT = "/workspace";
+const VFS_ROOT = "/";
+const SESSION_OBJECT_ROOT = "sessions";
+
+const AUTH_SESSION_COOKIE = "sandbox_auth_session";
+const OAUTH_STATE_COOKIE = "sandbox_oauth_state";
+const OAUTH_NEXT_COOKIE = "sandbox_oauth_next";
+const AUTH_SESSION_PREFIX = "auth/sessions";
+const AUTH_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+const OAUTH_STATE_TTL_SECONDS = 60 * 10;
+
+type AuthUser = {
+  id: number;
+  login: string;
+  name: string;
+  avatar: string;
+  email: string | null;
+  org: string;
+  team?: string;
+};
+
+type AuthSession = {
+  sessionId: string;
+  expiresAt: number;
+  user: AuthUser;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const activeSandboxSessions = new Set<string>();
+const mountedSandboxSessions = new Set<string>();
 
 const resolveSessionId = (
   raw: string | null | undefined,
   fallback = "default",
-) => (raw && raw.trim() ? raw.trim() : fallback);
+): string => (raw && raw.trim() ? raw.trim() : fallback);
 
-const normalizeWorkspacePath = (
+const normalizeVirtualPath = (
   rawPath: string | null | undefined,
-  fallback = WORKSPACE_ROOT,
-) => {
+  fallback = VFS_ROOT,
+): string => {
   const input = rawPath && rawPath.trim() ? rawPath.trim() : fallback;
   const raw = input.replace(/\\/g, "/");
-  const prefixed = raw.startsWith("/") ? raw : `${WORKSPACE_ROOT}/${raw}`;
-  const normalizedSegments: string[] = [];
+  const absolute = raw.startsWith("/") ? raw : `/${raw}`;
 
-  for (const part of prefixed.split("/")) {
+  const segments: string[] = [];
+  for (const part of absolute.split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") {
-      normalizedSegments.pop();
+      segments.pop();
       continue;
     }
-    normalizedSegments.push(part);
+    segments.push(part);
   }
 
-  const normalizedPath = `/${normalizedSegments.join("/")}`;
-  if (
-    normalizedPath !== WORKSPACE_ROOT &&
-    !normalizedPath.startsWith(`${WORKSPACE_ROOT}/`)
-  ) {
-    throw new Error(`Path must be under ${WORKSPACE_ROOT}`);
+  return segments.length ? `/${segments.join("/")}` : VFS_ROOT;
+};
+
+const toRelativePath = (path: string): string =>
+  path === VFS_ROOT ? "" : path.replace(/^\//, "");
+
+const getSessionPrefix = (sessionId: string): string =>
+  `${SESSION_OBJECT_ROOT}/${sessionId}`;
+
+const getDirectoryPrefix = (sessionId: string, directoryPath: string): string => {
+  const relativePath = toRelativePath(directoryPath);
+  const sessionPrefix = getSessionPrefix(sessionId);
+  return relativePath ? `${sessionPrefix}/${relativePath}/` : `${sessionPrefix}/`;
+};
+
+const buildFileKey = (sessionId: string, filePath: string): string => {
+  const relativePath = toRelativePath(filePath);
+  if (!relativePath) {
+    throw new Error("Path points to root directory");
+  }
+  return `${getSessionPrefix(sessionId)}/${relativePath}`;
+};
+
+const decodeObjectPath = (
+  sessionId: string,
+  key: string,
+): { name: string; path: string } | null => {
+  const sessionPrefix = `${getSessionPrefix(sessionId)}/`;
+  if (!key.startsWith(sessionPrefix)) return null;
+
+  const relativePath = key.slice(sessionPrefix.length);
+  if (!relativePath || relativePath === ".keep") return null;
+
+  const slashIndex = relativePath.lastIndexOf("/");
+  const name = slashIndex >= 0 ? relativePath.slice(slashIndex + 1) : relativePath;
+  const path = `/${relativePath}`;
+
+  return { name, path };
+};
+
+const getMountConfig = (env: Env):
+  | { bucketName: string; endpoint: string }
+  | null => {
+  const bucketName = (env.R2_BUCKET_NAME || "").trim();
+  const endpoint =
+    (env.R2_S3_ENDPOINT || "").trim() ||
+    ((env.R2_ACCOUNT_ID || "").trim()
+      ? `https://${(env.R2_ACCOUNT_ID || "").trim()}.r2.cloudflarestorage.com`
+      : "");
+
+  if (!bucketName || !endpoint) {
+    return null;
   }
 
-  return normalizedPath;
+  return { bucketName, endpoint };
+};
+
+const ensureBucketMounted = async (
+  sandbox: Sandbox,
+  env: Env,
+  sessionId: string,
+): Promise<{ mounted: boolean; message?: string }> => {
+  if (mountedSandboxSessions.has(sessionId)) {
+    return { mounted: true };
+  }
+
+  const mountConfig = getMountConfig(env);
+  if (!mountConfig) {
+    return {
+      mounted: false,
+      message: "缺少 R2 挂载配置（R2_BUCKET_NAME / R2_S3_ENDPOINT）",
+    };
+  }
+
+  const options: {
+    endpoint: string;
+    provider: "r2";
+    prefix: string;
+    credentials?: {
+      accessKeyId: string;
+      secretAccessKey: string;
+    };
+  } = {
+    endpoint: mountConfig.endpoint,
+    provider: "r2",
+    prefix: `/${getSessionPrefix(sessionId)}`,
+  };
+
+  if (env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) {
+    options.credentials = {
+      accessKeyId: env.R2_ACCESS_KEY_ID,
+      secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+    };
+  }
+
+  try {
+    await sandbox.mountBucket(mountConfig.bucketName, WORKSPACE_ROOT, options);
+    mountedSandboxSessions.add(sessionId);
+    return { mounted: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const lowercase = message.toLowerCase();
+
+    if (lowercase.includes("already mounted")) {
+      mountedSandboxSessions.add(sessionId);
+      return { mounted: true };
+    }
+
+    if (
+      lowercase.includes("wrangler dev") ||
+      lowercase.includes("fuse") ||
+      lowercase.includes("operation not permitted")
+    ) {
+      return {
+        mounted: false,
+        message: "本地 wrangler dev 不支持 bucket mount（生产部署可用）",
+      };
+    }
+
+    throw error;
+  }
 };
 
 const ensureTerminalServer = async (sandbox: Sandbox) => {
-  let serverRunning = false;
+  let terminalRunning = false;
 
   try {
-    const existing = await sandbox.getProcess("pty-server");
-    if (existing) {
-      const status = await existing.getStatus();
-      serverRunning = status === "running";
+    const process = await sandbox.getProcess("pty-server");
+    if (process) {
+      terminalRunning = (await process.getStatus()) === "running";
     }
   } catch {
-    serverRunning = false;
+    terminalRunning = false;
   }
 
-  if (serverRunning) return;
+  if (terminalRunning) return;
 
   await sandbox.startProcess("python3 /workspace/terminal-server.py", {
     processId: "pty-server",
@@ -1205,11 +1377,572 @@ const ensureTerminalServer = async (sandbox: Sandbox) => {
   await sleep(1200);
 };
 
+const ensureSandboxRuntime = async (
+  sandbox: Sandbox,
+  env: Env,
+  sessionId: string,
+): Promise<{ mounted: boolean; mountMessage?: string }> => {
+  const mountResult = await ensureBucketMounted(sandbox, env, sessionId);
+  await ensureTerminalServer(sandbox);
+
+  return {
+    mounted: mountResult.mounted,
+    mountMessage: mountResult.message,
+  };
+};
+
+const listAllKeysWithPrefix = async (
+  bucket: R2Bucket,
+  prefix: string,
+): Promise<string[]> => {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const listed = await bucket.list({ prefix, cursor });
+    keys.push(...listed.objects.map((obj) => obj.key));
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+
+  return keys;
+};
+
+const parseCookies = (cookieHeader: string | null): Record<string, string> => {
+  if (!cookieHeader) return {};
+
+  const cookies: Record<string, string> = {};
+  for (const chunk of cookieHeader.split(";")) {
+    const [rawKey, ...rawValue] = chunk.trim().split("=");
+    if (!rawKey) continue;
+    const raw = rawValue.join("=") || "";
+    try {
+      cookies[rawKey] = decodeURIComponent(raw);
+    } catch {
+      cookies[rawKey] = raw;
+    }
+  }
+  return cookies;
+};
+
+const buildSetCookie = (
+  name: string,
+  value: string,
+  options: {
+    maxAge?: number;
+    httpOnly?: boolean;
+    secure?: boolean;
+    sameSite?: "Lax" | "Strict" | "None";
+    path?: string;
+  } = {},
+): string => {
+  const parts = [`${name}=${encodeURIComponent(value)}`];
+  parts.push(`Path=${options.path || "/"}`);
+  if (typeof options.maxAge === "number") parts.push(`Max-Age=${options.maxAge}`);
+  if (options.httpOnly !== false) parts.push("HttpOnly");
+  if (options.sameSite) parts.push(`SameSite=${options.sameSite}`);
+  if (options.secure) parts.push("Secure");
+  return parts.join("; ");
+};
+
+const sanitizeNextPath = (raw: string | null | undefined): string => {
+  const fallback = "/";
+  if (!raw) return fallback;
+  if (!raw.startsWith("/")) return fallback;
+  if (raw.startsWith("//")) return fallback;
+  return raw;
+};
+
+const escapeHtmlText = (text: string): string =>
+  text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const createRandomToken = () =>
+  crypto.randomUUID().replace(/-/g, "") + crypto.getRandomValues(new Uint32Array(1))[0];
+
+const createUnauthorizedApiResponse = (clearCookie: string | null = null) => {
+  const headers = new Headers({ "Content-Type": "application/json; charset=utf-8" });
+  if (clearCookie) headers.append("Set-Cookie", clearCookie);
+  return new Response(
+    JSON.stringify({ success: false, error: "Unauthorized" }),
+    { status: 401, headers },
+  );
+};
+
+const createUnauthorizedWebSocketResponse = (clearCookie: string | null = null) => {
+  const headers = new Headers();
+  if (clearCookie) headers.append("Set-Cookie", clearCookie);
+  return new Response("Unauthorized", { status: 401, headers });
+};
+
+const createUnauthorizedPageRedirect = (
+  url: URL,
+  clearCookie: string | null = null,
+) => {
+  const loginUrl = new URL("/login", url.origin);
+  loginUrl.searchParams.set(
+    "next",
+    sanitizeNextPath(`${url.pathname}${url.search}`),
+  );
+  const headers = new Headers({ Location: loginUrl.toString() });
+  if (clearCookie) headers.append("Set-Cookie", clearCookie);
+  return new Response(null, { status: 302, headers });
+};
+
+const getAuthSessionKey = (sessionId: string) =>
+  `${AUTH_SESSION_PREFIX}/${sessionId}.json`;
+
+const loadAuthSession = async (
+  env: Env,
+  authSessionId: string,
+): Promise<AuthSession | null> => {
+  const object = await env.CODE_BUCKET.get(getAuthSessionKey(authSessionId));
+  if (!object) return null;
+
+  try {
+    const raw = await object.text();
+    const parsed = JSON.parse(raw) as AuthSession;
+    if (!parsed?.expiresAt || parsed.expiresAt <= Date.now()) {
+      await env.CODE_BUCKET.delete(getAuthSessionKey(authSessionId));
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const saveAuthSession = async (env: Env, session: AuthSession): Promise<void> => {
+  await env.CODE_BUCKET.put(getAuthSessionKey(session.sessionId), JSON.stringify(session));
+};
+
+const deleteAuthSession = async (
+  env: Env,
+  authSessionId: string,
+): Promise<void> => {
+  await env.CODE_BUCKET.delete(getAuthSessionKey(authSessionId));
+};
+
+const exchangeGithubCodeForToken = async (
+  env: Env,
+  code: string,
+  redirectUri: string,
+) => {
+  const clientId = (env.GITHUB_CLIENT_ID || "").trim();
+  const clientSecret = (env.GITHUB_CLIENT_SECRET || "").trim();
+
+  if (!clientId || !clientSecret) {
+    throw new Error("Missing GitHub OAuth credentials");
+  }
+
+  const payload = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    redirect_uri: redirectUri,
+  });
+
+  const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: payload.toString(),
+  });
+
+  const tokenData = (await tokenResponse.json()) as {
+    access_token?: string;
+    error?: string;
+  };
+
+  if (!tokenResponse.ok || !tokenData.access_token) {
+    throw new Error(tokenData.error || "Failed to fetch GitHub access token");
+  }
+
+  return tokenData.access_token;
+};
+
+const getGithubUser = async (accessToken: string) => {
+  const userResponse = await fetch("https://api.github.com/user", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "cloudflare-sandbox-ide",
+    },
+  });
+
+  if (!userResponse.ok) {
+    throw new Error("Failed to fetch GitHub user");
+  }
+
+  return (await userResponse.json()) as {
+    id: number;
+    login: string;
+    name?: string | null;
+    avatar_url?: string | null;
+    email?: string | null;
+  };
+};
+
+const ensureGithubOrgMembership = async (
+  accessToken: string,
+  allowedOrg: string,
+) => {
+  const membershipResponse = await fetch(
+    `https://api.github.com/user/memberships/orgs/${allowedOrg}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "cloudflare-sandbox-ide",
+      },
+    },
+  );
+
+  if (membershipResponse.status === 404) return false;
+  if (!membershipResponse.ok) {
+    throw new Error("Failed to validate organization membership");
+  }
+
+  const membership = (await membershipResponse.json()) as { state?: string };
+  return membership.state === "active";
+};
+
+const ensureGithubTeamMembership = async (
+  accessToken: string,
+  allowedOrg: string,
+  allowedTeam: string,
+  userLogin: string,
+) => {
+  const teamsResponse = await fetch(
+    `https://api.github.com/orgs/${allowedOrg}/teams?per_page=100`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "cloudflare-sandbox-ide",
+      },
+    },
+  );
+
+  if (!teamsResponse.ok) {
+    throw new Error("Failed to fetch organization teams");
+  }
+
+  const teams = (await teamsResponse.json()) as Array<{
+    id: number;
+    name: string;
+    slug: string;
+  }>;
+
+  const targetTeam = teams.find(
+    (team) => team.name === allowedTeam || team.slug === allowedTeam,
+  );
+
+  if (!targetTeam) {
+    throw new Error("Configured team was not found");
+  }
+
+  const memberResponse = await fetch(
+    `https://api.github.com/teams/${targetTeam.id}/memberships/${userLogin}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "cloudflare-sandbox-ide",
+      },
+    },
+  );
+
+  if (memberResponse.status === 404) return false;
+  if (!memberResponse.ok) {
+    throw new Error("Failed to validate team membership");
+  }
+
+  const membership = (await memberResponse.json()) as { state?: string };
+  return membership.state === "active";
+};
+
+const assertAuthenticated = async (
+  request: Request,
+  url: URL,
+  env: Env,
+): Promise<{ session: AuthSession | null; response: Response | null }> => {
+  const publicPaths = new Set([
+    "/login",
+    "/auth/login",
+    "/auth/callback",
+    "/auth/logout",
+  ]);
+  if (publicPaths.has(url.pathname)) {
+    return { session: null, response: null };
+  }
+
+  const cookies = parseCookies(request.headers.get("Cookie"));
+  const authSessionId = cookies[AUTH_SESSION_COOKIE];
+  const secureCookie = url.protocol === "https:";
+  const clearAuthCookie = buildSetCookie(AUTH_SESSION_COOKIE, "", {
+    maxAge: 0,
+    sameSite: "Lax",
+    secure: secureCookie,
+  });
+
+  if (!authSessionId) {
+    if (url.pathname === "/ws") {
+      return {
+        session: null,
+        response: createUnauthorizedWebSocketResponse(),
+      };
+    }
+    if (url.pathname.startsWith("/api/")) {
+      return {
+        session: null,
+        response: createUnauthorizedApiResponse(),
+      };
+    }
+    return {
+      session: null,
+      response: createUnauthorizedPageRedirect(url),
+    };
+  }
+
+  const session = await loadAuthSession(env, authSessionId);
+  if (session) {
+    return { session, response: null };
+  }
+
+  if (url.pathname === "/ws") {
+    return {
+      session: null,
+      response: createUnauthorizedWebSocketResponse(clearAuthCookie),
+    };
+  }
+  if (url.pathname.startsWith("/api/")) {
+    return {
+      session: null,
+      response: createUnauthorizedApiResponse(clearAuthCookie),
+    };
+  }
+  return {
+    session: null,
+    response: createUnauthorizedPageRedirect(url, clearAuthCookie),
+  };
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // WebSocket 终端 - 必须在 proxyToSandbox 之前处理
+    if (url.pathname === "/login") {
+      const cookies = parseCookies(request.headers.get("Cookie"));
+      const authSessionId = cookies[AUTH_SESSION_COOKIE];
+      if (authSessionId) {
+        const session = await loadAuthSession(env, authSessionId);
+        if (session) {
+          return Response.redirect(new URL("/", url.origin).toString(), 302);
+        }
+      }
+
+      const nextPath = sanitizeNextPath(url.searchParams.get("next"));
+      const reason = (url.searchParams.get("reason") || "").slice(0, 200);
+      return new Response(LOGIN_HTML(reason, nextPath), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/auth/login") {
+      const clientId = (env.GITHUB_CLIENT_ID || "").trim();
+      const allowedOrg = (env.GITHUB_ALLOWED_ORG || "").trim();
+      if (!clientId || !allowedOrg) {
+        return new Response("Missing GitHub OAuth configuration", { status: 500 });
+      }
+
+      const nextPath = sanitizeNextPath(url.searchParams.get("next"));
+      const state = createRandomToken();
+      const redirectUri = `${url.origin}/auth/callback`;
+      const oauthUrl = new URL("https://github.com/login/oauth/authorize");
+      oauthUrl.searchParams.set("client_id", clientId);
+      oauthUrl.searchParams.set("redirect_uri", redirectUri);
+      oauthUrl.searchParams.set("scope", "read:user read:org read:team");
+      oauthUrl.searchParams.set("state", state);
+
+      const secureCookie = url.protocol === "https:";
+      const headers = new Headers({ Location: oauthUrl.toString() });
+      headers.append(
+        "Set-Cookie",
+        buildSetCookie(OAUTH_STATE_COOKIE, state, {
+          maxAge: OAUTH_STATE_TTL_SECONDS,
+          sameSite: "Lax",
+          secure: secureCookie,
+        }),
+      );
+      headers.append(
+        "Set-Cookie",
+        buildSetCookie(OAUTH_NEXT_COOKIE, nextPath, {
+          maxAge: OAUTH_STATE_TTL_SECONDS,
+          sameSite: "Lax",
+          secure: secureCookie,
+        }),
+      );
+
+      return new Response(null, { status: 302, headers });
+    }
+
+    if (url.pathname === "/auth/callback") {
+      const secureCookie = url.protocol === "https:";
+      const clearStateCookie = buildSetCookie(OAUTH_STATE_COOKIE, "", {
+        maxAge: 0,
+        sameSite: "Lax",
+        secure: secureCookie,
+      });
+      const clearNextCookie = buildSetCookie(OAUTH_NEXT_COOKIE, "", {
+        maxAge: 0,
+        sameSite: "Lax",
+        secure: secureCookie,
+      });
+
+      const redirectToLogin = (reason: string) => {
+        const loginUrl = new URL("/login", url.origin);
+        loginUrl.searchParams.set("reason", reason);
+        const headers = new Headers({ Location: loginUrl.toString() });
+        headers.append("Set-Cookie", clearStateCookie);
+        headers.append("Set-Cookie", clearNextCookie);
+        return new Response(null, { status: 302, headers });
+      };
+
+      const code = (url.searchParams.get("code") || "").trim();
+      const state = (url.searchParams.get("state") || "").trim();
+      if (!code || !state) {
+        return redirectToLogin("GitHub 回调参数缺失");
+      }
+
+      const cookies = parseCookies(request.headers.get("Cookie"));
+      const expectedState = cookies[OAUTH_STATE_COOKIE];
+      const nextPath = sanitizeNextPath(cookies[OAUTH_NEXT_COOKIE] || "/");
+      if (!expectedState || expectedState !== state) {
+        return redirectToLogin("OAuth state 校验失败");
+      }
+
+      const allowedOrg = (env.GITHUB_ALLOWED_ORG || "").trim();
+      const allowedTeam = (env.GITHUB_ALLOWED_TEAM || "").trim();
+      if (!allowedOrg) {
+        return redirectToLogin("未配置允许访问的 GitHub 组织");
+      }
+
+      try {
+        const accessToken = await exchangeGithubCodeForToken(
+          env,
+          code,
+          `${url.origin}/auth/callback`,
+        );
+
+        const user = await getGithubUser(accessToken);
+        const orgAllowed = await ensureGithubOrgMembership(accessToken, allowedOrg);
+        if (!orgAllowed) {
+          return redirectToLogin(`当前账号不在组织 ${allowedOrg} 中`);
+        }
+
+        if (allowedTeam) {
+          const teamAllowed = await ensureGithubTeamMembership(
+            accessToken,
+            allowedOrg,
+            allowedTeam,
+            user.login,
+          );
+          if (!teamAllowed) {
+            return redirectToLogin(`当前账号不在团队 ${allowedTeam} 中`);
+          }
+        }
+
+        const authSessionId = createRandomToken();
+        const authSession: AuthSession = {
+          sessionId: authSessionId,
+          expiresAt: Date.now() + AUTH_SESSION_TTL_SECONDS * 1000,
+          user: {
+            id: user.id,
+            login: user.login,
+            name: user.name || user.login,
+            avatar: user.avatar_url || "",
+            email: user.email || null,
+            org: allowedOrg,
+            team: allowedTeam || undefined,
+          },
+        };
+        await saveAuthSession(env, authSession);
+
+        const headers = new Headers({
+          Location: new URL(nextPath, url.origin).toString(),
+        });
+        headers.append(
+          "Set-Cookie",
+          buildSetCookie(AUTH_SESSION_COOKIE, authSessionId, {
+            maxAge: AUTH_SESSION_TTL_SECONDS,
+            sameSite: "Lax",
+            secure: secureCookie,
+          }),
+        );
+        headers.append("Set-Cookie", clearStateCookie);
+        headers.append("Set-Cookie", clearNextCookie);
+
+        return new Response(null, { status: 302, headers });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "GitHub OAuth 登录失败";
+        return redirectToLogin(message);
+      }
+    }
+
+    if (url.pathname === "/auth/logout") {
+      const cookies = parseCookies(request.headers.get("Cookie"));
+      const authSessionId = cookies[AUTH_SESSION_COOKIE];
+      if (authSessionId) {
+        await deleteAuthSession(env, authSessionId);
+      }
+
+      const secureCookie = url.protocol === "https:";
+      const headers = new Headers({
+        Location: new URL("/login", url.origin).toString(),
+      });
+      headers.append(
+        "Set-Cookie",
+        buildSetCookie(AUTH_SESSION_COOKIE, "", {
+          maxAge: 0,
+          sameSite: "Lax",
+          secure: secureCookie,
+        }),
+      );
+      headers.append(
+        "Set-Cookie",
+        buildSetCookie(OAUTH_STATE_COOKIE, "", {
+          maxAge: 0,
+          sameSite: "Lax",
+          secure: secureCookie,
+        }),
+      );
+      headers.append(
+        "Set-Cookie",
+        buildSetCookie(OAUTH_NEXT_COOKIE, "", {
+          maxAge: 0,
+          sameSite: "Lax",
+          secure: secureCookie,
+        }),
+      );
+      return new Response(null, { status: 302, headers });
+    }
+
+    const auth = await assertAuthenticated(request, url, env);
+    if (auth.response) {
+      return auth.response;
+    }
+
+    if (url.pathname === "/api/auth/me") {
+      return Response.json({ success: true, user: auth.session?.user || null });
+    }
+
     if (url.pathname === "/ws") {
       const upgrade = request.headers.get("Upgrade");
       if (upgrade !== "websocket") {
@@ -1223,27 +1956,21 @@ export default {
       const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
 
       try {
-        await ensureTerminalServer(sandbox);
+        await ensureSandboxRuntime(sandbox, env, sessionId);
         activeSandboxSessions.add(sessionId);
       } catch {
-        return new Response("Failed to start terminal server", { status: 500 });
+        return new Response("Failed to start sandbox terminal", { status: 500 });
       }
 
       return sandbox.wsConnect(request, 9000);
     }
 
-    // 处理预览 URL 路由（在 WebSocket 之后）
-    const proxyResponse = await proxyToSandbox(request, env);
-    if (proxyResponse) return proxyResponse;
-
-    // 主页
     if (url.pathname === "/" || url.pathname === "/index.html") {
       return new Response(HTML, {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
 
-    // API: 查询 Sandbox 状态（仅基于当前 Worker 进程内记录）
     if (url.pathname === "/api/sandbox/status") {
       const sessionId = resolveSessionId(url.searchParams.get("session"));
       return Response.json({
@@ -1252,16 +1979,21 @@ export default {
       });
     }
 
-    // API: 启动 Sandbox
     if (url.pathname === "/api/sandbox/start") {
       const body = (await request.json()) as { sessionId?: string };
-      const sessionId = resolveSessionId(body?.sessionId);
+      const sessionId = resolveSessionId(body.sessionId);
       const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
 
       try {
-        await ensureTerminalServer(sandbox);
+        const runtime = await ensureSandboxRuntime(sandbox, env, sessionId);
         activeSandboxSessions.add(sessionId);
-        return Response.json({ success: true, running: true });
+
+        return Response.json({
+          success: true,
+          running: true,
+          mounted: runtime.mounted,
+          mountMessage: runtime.mountMessage,
+        });
       } catch (error) {
         return Response.json(
           {
@@ -1273,22 +2005,12 @@ export default {
       }
     }
 
-    // API: 关闭 Sandbox（终止所有进程和暴露端口）
     if (url.pathname === "/api/sandbox/stop") {
       const body = (await request.json()) as { sessionId?: string };
-      const sessionId = resolveSessionId(body?.sessionId);
+      const sessionId = resolveSessionId(body.sessionId);
       const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
 
       try {
-        try {
-          const ports = await sandbox.getExposedPorts(url.hostname);
-          for (const portInfo of ports) {
-            try {
-              await sandbox.unexposePort(portInfo.port);
-            } catch {}
-          }
-        } catch {}
-
         try {
           await sandbox.killAllProcesses();
         } catch {}
@@ -1298,6 +2020,8 @@ export default {
         } catch {}
 
         activeSandboxSessions.delete(sessionId);
+        mountedSandboxSessions.delete(sessionId);
+
         return Response.json({ success: true, running: false });
       } catch (error) {
         return Response.json(
@@ -1310,150 +2034,71 @@ export default {
       }
     }
 
-    // API: 启动并暴露 HTTP 服务
-    if (url.pathname === "/api/start-server") {
-      const body = (await request.json()) as {
-        sessionId?: string;
-        port: number;
-        command: string;
-      };
-      const sessionId = resolveSessionId(body?.sessionId);
-      const { port, command } = body;
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
-
-      try {
-        await sandbox.startProcess(command, {
-          processId: `server-${port}`,
-          cwd: WORKSPACE_ROOT,
-        });
-        await sleep(2000);
-
-        const exposed = await sandbox.exposePort(port, {
-          hostname: url.hostname,
-          name: `service-${port}`,
-        });
-        activeSandboxSessions.add(sessionId);
-
-        return Response.json({
-          success: true,
-          publicUrl: exposed.url,
-          port,
-        });
-      } catch (error) {
-        return Response.json(
-          {
-            success: false,
-            error:
-              error instanceof Error ? error.message : "Failed to start server",
-          },
-          { status: 500 },
-        );
-      }
-    }
-
-    // API: 停止服务
-    if (url.pathname === "/api/stop-server") {
-      const body = (await request.json()) as {
-        sessionId?: string;
-        port: number;
-      };
-      const sessionId = resolveSessionId(body?.sessionId);
-      const { port } = body;
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
-
-      try {
-        try {
-          const process = await sandbox.getProcess(`server-${port}`);
-          if (process) {
-            await process.kill("SIGTERM");
-          }
-        } catch {}
-
-        try {
-          await sandbox.unexposePort(port);
-        } catch {}
-
-        return Response.json({ success: true });
-      } catch (error) {
-        return Response.json(
-          {
-            success: false,
-            error: error instanceof Error ? error.message : "Failed",
-          },
-          { status: 500 },
-        );
-      }
-    }
-
-    // API: 获取已暴露的服务列表
-    if (url.pathname === "/api/services") {
-      const sessionId = resolveSessionId(url.searchParams.get("session"));
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
-
-      try {
-        const ports = await sandbox.getExposedPorts(url.hostname);
-        const services = ports.map((portInfo) => ({
-          port: portInfo.port,
-          url: portInfo.url,
-          status: portInfo.status,
-        }));
-
-        return Response.json({ success: true, services });
-      } catch (error) {
-        return Response.json(
-          {
-            success: false,
-            error: error instanceof Error ? error.message : "Failed",
-          },
-          { status: 500 },
-        );
-      }
-    }
-
-    // API: 列出文件
     if (url.pathname === "/api/files") {
       const sessionId = resolveSessionId(url.searchParams.get("session"));
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
 
       try {
-        const sandboxPath = normalizeWorkspacePath(url.searchParams.get("path"));
-        const result = await sandbox.listFiles(sandboxPath, {
-          recursive: false,
-          includeHidden: true,
+        const directoryPath = normalizeVirtualPath(url.searchParams.get("path"), VFS_ROOT);
+        const prefix = getDirectoryPrefix(sessionId, directoryPath);
+
+        const listed = await env.CODE_BUCKET.list({
+          prefix,
+          delimiter: "/",
         });
 
-        const files = result.files
-          .filter((file) => !file.relativePath.includes("/"))
-          .map((file) => ({
-            name: file.name,
-            path: file.absolutePath,
-            type: file.type === "directory" ? "directory" : "file",
-            size: file.type === "directory" ? "-" : String(file.size),
-            modified: file.modifiedAt,
-          }))
-          .sort((a, b) => {
-            if (a.type !== b.type) {
-              return a.type === "directory" ? -1 : 1;
-            }
-            return a.name.localeCompare(b.name);
+        const directories = (listed.delimitedPrefixes || []).map((folderPrefix) => {
+          const name = folderPrefix.slice(prefix.length).replace(/\/$/, "");
+          const path = directoryPath === "/" ? `/${name}` : `${directoryPath}/${name}`;
+          return {
+            name,
+            path,
+            type: "directory",
+            size: "-",
+            modified: "",
+          };
+        });
+
+        const files = listed.objects
+          .map((obj) => decodeObjectPath(sessionId, obj.key))
+          .filter((item): item is { name: string; path: string } => !!item)
+          .filter((item) => {
+            const expectedPrefix = directoryPath === "/" ? "/" : `${directoryPath}/`;
+            const relative = item.path.slice(expectedPrefix.length);
+            return !relative.includes("/") && item.name !== ".keep";
+          })
+          .map((item) => {
+            const objectKey = buildFileKey(sessionId, item.path);
+            const object = listed.objects.find((entry) => entry.key === objectKey);
+            return {
+              name: item.name,
+              path: item.path,
+              type: "file",
+              size: object ? String(object.size) : "0",
+              modified: object?.uploaded ? object.uploaded.toISOString() : "",
+            };
           });
 
-        return Response.json({ success: true, files });
+        const merged = [...directories, ...files].sort((a, b) => {
+          if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+
+        return Response.json({ success: true, files: merged });
       } catch (error) {
         return Response.json(
           {
             success: false,
-            error: error instanceof Error ? error.message : "Failed",
+            error: error instanceof Error ? error.message : "Failed to list files",
           },
           { status: 500 },
         );
       }
     }
 
-    // API: 读取文件
     if (url.pathname === "/api/read") {
       const sessionId = resolveSessionId(url.searchParams.get("session"));
       const rawPath = url.searchParams.get("path");
+
       if (!rawPath) {
         return Response.json(
           { success: false, error: "No path" },
@@ -1461,92 +2106,118 @@ export default {
         );
       }
 
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
-
       try {
-        const sandboxPath = normalizeWorkspacePath(rawPath);
-        const file = await sandbox.readFile(sandboxPath);
-        return Response.json({ success: true, content: file.content });
+        const filePath = normalizeVirtualPath(rawPath, VFS_ROOT);
+        const key = buildFileKey(sessionId, filePath);
+        const object = await env.CODE_BUCKET.get(key);
+
+        if (!object) {
+          return Response.json(
+            { success: false, error: "File not found" },
+            { status: 404 },
+          );
+        }
+
+        const content = await object.text();
+        return Response.json({ success: true, content });
       } catch (error) {
         return Response.json(
           {
             success: false,
-            error: error instanceof Error ? error.message : "Failed",
+            error: error instanceof Error ? error.message : "Failed to read file",
           },
           { status: 500 },
         );
       }
     }
 
-    // API: 写入文件
     if (url.pathname === "/api/write") {
       const body = (await request.json()) as {
         sessionId?: string;
         path: string;
         content: string;
       };
-      const sessionId = resolveSessionId(body?.sessionId);
-      const content =
-        typeof body?.content === "string" ? body.content : String(body?.content ?? "");
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
+      const sessionId = resolveSessionId(body.sessionId);
 
       try {
-        const sandboxPath = normalizeWorkspacePath(body?.path);
-        await sandbox.writeFile(sandboxPath, content);
+        const filePath = normalizeVirtualPath(body.path, VFS_ROOT);
+        const key = buildFileKey(sessionId, filePath);
+        const content = typeof body.content === "string" ? body.content : String(body.content ?? "");
+
+        await env.CODE_BUCKET.put(key, content);
         return Response.json({ success: true });
       } catch (error) {
         return Response.json(
           {
             success: false,
-            error: error instanceof Error ? error.message : "Failed",
+            error: error instanceof Error ? error.message : "Failed to write file",
           },
           { status: 500 },
         );
       }
     }
 
-    // API: 创建文件夹
     if (url.pathname === "/api/mkdir") {
       const body = (await request.json()) as {
         sessionId?: string;
         path: string;
       };
-      const sessionId = resolveSessionId(body?.sessionId);
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
+      const sessionId = resolveSessionId(body.sessionId);
 
       try {
-        const sandboxPath = normalizeWorkspacePath(body?.path);
-        await sandbox.mkdir(sandboxPath, { recursive: true });
+        const folderPath = normalizeVirtualPath(body.path, VFS_ROOT);
+        if (folderPath === VFS_ROOT) {
+          return Response.json({ success: true });
+        }
+
+        const folderKey = `${buildFileKey(sessionId, folderPath)}/.keep`;
+        await env.CODE_BUCKET.put(folderKey, "");
+
         return Response.json({ success: true });
       } catch (error) {
         return Response.json(
           {
             success: false,
-            error: error instanceof Error ? error.message : "Failed",
+            error: error instanceof Error ? error.message : "Failed to create folder",
           },
           { status: 500 },
         );
       }
     }
 
-    // API: 删除文件/文件夹
     if (url.pathname === "/api/delete") {
       const body = (await request.json()) as {
         sessionId?: string;
         path: string;
       };
-      const sessionId = resolveSessionId(body?.sessionId);
-      const sandbox = getSandbox(env.Sandbox, sessionId, { normalizeId: true });
+      const sessionId = resolveSessionId(body.sessionId);
 
       try {
-        const sandboxPath = normalizeWorkspacePath(body?.path);
-        await sandbox.deleteFile(sandboxPath);
+        const targetPath = normalizeVirtualPath(body.path, VFS_ROOT);
+        if (targetPath === VFS_ROOT) {
+          return Response.json(
+            { success: false, error: "Cannot delete root path" },
+            { status: 400 },
+          );
+        }
+
+        const baseKey = buildFileKey(sessionId, targetPath);
+        const keys = new Set<string>([baseKey, `${baseKey}/.keep`]);
+
+        const nestedKeys = await listAllKeysWithPrefix(env.CODE_BUCKET, `${baseKey}/`);
+        for (const key of nestedKeys) keys.add(key);
+
+        const deleteTargets = Array.from(keys).filter(Boolean);
+        if (deleteTargets.length > 0) {
+          await env.CODE_BUCKET.delete(deleteTargets);
+        }
+
         return Response.json({ success: true });
       } catch (error) {
         return Response.json(
           {
             success: false,
-            error: error instanceof Error ? error.message : "Failed",
+            error: error instanceof Error ? error.message : "Failed to delete path",
           },
           { status: 500 },
         );
